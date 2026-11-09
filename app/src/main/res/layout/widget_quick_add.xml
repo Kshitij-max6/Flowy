@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/widget_quick_add_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@drawable/widget_background"
+    android:orientation="horizontal"
+    android:padding="12dp"
+    android:gravity="center_vertical">
+
+    <TextView
+        android:id="@+id/widget_quick_add_btn"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center"
+        android:background="@drawable/widget_button_background"
+        android:paddingTop="10dp"
+        android:paddingBottom="10dp"
+        android:text="+ Quick Add Expense"
+        android:textColor="#000000"
+        android:textSize="13sp"
+        android:textStyle="bold" />
+
+</LinearLayout>

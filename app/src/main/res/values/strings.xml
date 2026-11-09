@@ -1,0 +1,14 @@
+<resources>
+    <string name="app_name">Flowly</string>
+    <string name="widget_today_spending_desc">View today\'s spending progress and budget target</string>
+    <string name="widget_quick_add_desc">One-tap quick add expense shortcut</string>
+    
+    <string name="shortcut_voice_expense_short">Voice Add</string>
+    <string name="shortcut_voice_expense_long">Log Expense with Voice</string>
+    <string name="shortcut_add_expense_short">Quick Add</string>
+    <string name="shortcut_add_expense_long">Add New Expense</string>
+    <string name="shortcut_books_short">Expense Books</string>
+    <string name="shortcut_books_long">Manage Expense Books</string>
+    <string name="shortcut_insights_short">Spending Story</string>
+    <string name="shortcut_insights_long">View Monthly Spending Story</string>
+</resources>

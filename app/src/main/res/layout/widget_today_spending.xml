@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/widget_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@drawable/widget_background"
+    android:orientation="vertical"
+    android:padding="16dp"
+    android:gravity="center_vertical">
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="TODAY'S SPEND"
+        android:textSize="10sp"
+        android:textStyle="bold"
+        android:letterSpacing="0.1"
+        android:textColor="#9CA3AF" />
+
+    <TextView
+        android:id="@+id/widget_today_amount"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="4dp"
+        android:text="₹0"
+        android:textSize="22sp"
+        android:textStyle="bold"
+        android:textColor="#F43F5E" />
+
+    <TextView
+        android:id="@+id/widget_budget_target"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="4dp"
+        android:text="of ₹1,000 daily budget"
+        android:textSize="11sp"
+        android:textColor="#D1D5DB" />
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:text="Flowly • Tap to view"
+        android:textSize="9sp"
+        android:textColor="#10B981" />
+
+</LinearLayout>

@@ -1,0 +1,6 @@
+{
+  "name": "Flowly",
+  "description": "Premium offline-first expense tracker designed around the natural flow of money: income, accounts, expenses, and insights.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

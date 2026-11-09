@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="utf-8"?>
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <shortcut
+        android:shortcutId="voice_expense"
+        android:enabled="true"
+        android:icon="@drawable/ic_shortcut_mic"
+        android:shortcutShortLabel="@string/shortcut_voice_expense_short"
+        android:shortcutLongLabel="@string/shortcut_voice_expense_long">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:targetPackage="com.example"
+            android:targetClass="com.example.MainActivity">
+            <extra android:name="navigate_to" android:value="voice_expense" />
+        </intent>
+        <categories android:name="android.shortcut.conversation" />
+    </shortcut>
+
+    <shortcut
+        android:shortcutId="add_expense"
+        android:enabled="true"
+        android:icon="@drawable/ic_shortcut_add"
+        android:shortcutShortLabel="@string/shortcut_add_expense_short"
+        android:shortcutLongLabel="@string/shortcut_add_expense_long">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:targetPackage="com.example"
+            android:targetClass="com.example.MainActivity">
+            <extra android:name="navigate_to" android:value="add_transaction" />
+        </intent>
+    </shortcut>
+
+    <shortcut
+        android:shortcutId="expense_books"
+        android:enabled="true"
+        android:icon="@drawable/ic_shortcut_books"
+        android:shortcutShortLabel="@string/shortcut_books_short"
+        android:shortcutLongLabel="@string/shortcut_books_long">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:targetPackage="com.example"
+            android:targetClass="com.example.MainActivity">
+            <extra android:name="navigate_to" android:value="expense_books" />
+        </intent>
+    </shortcut>
+
+    <shortcut
+        android:shortcutId="spending_story"
+        android:enabled="true"
+        android:icon="@drawable/ic_shortcut_story"
+        android:shortcutShortLabel="@string/shortcut_insights_short"
+        android:shortcutLongLabel="@string/shortcut_insights_long">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:targetPackage="com.example"
+            android:targetClass="com.example.MainActivity">
+            <extra android:name="navigate_to" android:value="insights" />
+        </intent>
+    </shortcut>
+</shortcuts>
