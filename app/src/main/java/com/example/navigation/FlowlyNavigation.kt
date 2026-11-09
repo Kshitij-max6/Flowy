@@ -323,6 +323,8 @@ fun FlowlyApp(
                     AppearanceScreen(
                         themeMode = userSettings.themeMode,
                         onThemeModeSelected = { settingsViewModel.setThemeMode(it) },
+                        accentTheme = userSettings.prestigeTheme,
+                        onAccentSelected = { settingsViewModel.setPrestigeTheme(it) },
                         onNavigateBack = { navController.popBackStack() }
                     )
                 }

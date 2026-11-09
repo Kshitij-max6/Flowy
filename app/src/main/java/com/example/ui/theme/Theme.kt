@@ -89,6 +89,8 @@ fun FlowlyTheme(
     val reduceMotion = rememberReduceMotion()
     val colorScheme = if (reduceMotion) targetScheme else targetScheme.animated()
 
+    SideEffect { if (AccentColor.color != prestigeTheme.primaryColor) AccentColor.color = prestigeTheme.primaryColor }
+
     val view = LocalView.current
     if (!view.isInEditMode) {
         SideEffect {

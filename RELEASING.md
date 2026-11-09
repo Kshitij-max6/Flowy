@@ -59,6 +59,24 @@ last manual reinstall** when moving to the first release built by this workflow:
 
 After that, every update installs in place and keeps the data.
 
+## Your data and updates
+
+An in-place update never touches app data: Android keeps the app's private storage when the package name and
+signing key stay the same, and Flowly's database only ever changes through numbered migrations
+(`MIGRATION_x_y` in `AppDatabase`), which add tables/columns and never drop or rewrite your rows.
+There is no destructive fallback anywhere. Data is lost only by uninstalling the app, clearing its storage, or
+installing an APK signed with a different key (Android refuses that install unless you uninstall first, hence the
+one-time reinstall above).
+
+Rules to keep it that way when you change the schema:
+
+1. Bump `AppDatabase.DB_VERSION` and add a `MIGRATION_<old>_<new>`; register it in `getDatabase()`.
+2. Build once and commit the new `app/schemas/<version>.json`.
+3. Never lower the version and never reuse an old `versionCode`.
+
+Only the **release** workflow (`v*` tags) produces updatable APKs. The push-to-main workflow builds a *debug* APK
+signed with a key made fresh on every run: it is for quick testing only and cannot update over a release build.
+
 ## Safety nets for updates
 
 * A copy of the database is saved right before each install and again on the first launch of every new

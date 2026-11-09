@@ -1,7 +1,11 @@
 package com.example.ui.theme
 
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.lerp
 
 // ==========================================================================
 // Flowly · Apple-inspired palette
@@ -34,13 +38,13 @@ val ChampagneGoldSoft = Color(0xFF0B2A4A)
 val ChampagneGoldSubtle = Color(0xFF0A1B2E)
 val ChampagneGoldBorder = Color(0xFF123A66)
 
-val RoyalGold = SystemBlue
-val PrestigeGold = SystemBlue
+val RoyalGold: Color get() = AccentColor.color
+val PrestigeGold: Color get() = AccentColor.color
 val ObsidianBlack = Color(0xFF000000)
 val DarkCanvas = Color(0xFF000000)
 
-val EmeraldPrimary = SystemBlue
-val EmeraldDark = SystemBlueDeep
+val EmeraldPrimary: Color get() = AccentColor.color
+val EmeraldDark: Color get() = lerp(AccentColor.color, Color.Black, 0.22f)
 val EmeraldDeep = Color(0xFF0059B3)
 val EmeraldLight = ChampagneGoldLight
 val EmeraldSoft = ChampagneGoldSoft
@@ -87,3 +91,13 @@ val RingTrackDark = Color(0xFF2C2C2E)
 val GoldShimmerBrush = Brush.horizontalGradient(listOf(SystemBlue, SystemBlue))
 val ObsidianCardGradient = Brush.verticalGradient(listOf(DarkSurface, DarkSurface))
 val HeroGlowGradient = Brush.radialGradient(listOf(Color.Transparent, Color.Transparent))
+
+
+/**
+ * The user's chosen accent colour (Appearance -> Accent colour).
+ * Backed by Compose state, so every screen that reads EmeraldPrimary / RoyalGold repaints when it changes.
+ * FlowlyTheme keeps it in sync with the saved setting.
+ */
+object AccentColor {
+    var color: Color by mutableStateOf(SystemBlue)
+}

@@ -26,6 +26,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -71,7 +72,9 @@ import com.example.ui.theme.LightSurface
 import com.example.ui.theme.LightTextPrimary
 import com.example.ui.theme.LightTextSecondary
 import com.example.ui.theme.LocalReduceMotion
+import com.example.ui.theme.PrestigeTheme
 import com.example.ui.theme.pressable
+import androidx.compose.ui.text.style.TextAlign
 
 // =============================================================================
 // APPEARANCE
@@ -125,8 +128,11 @@ fun AppearanceScreen(
     themeMode: String,
     onThemeModeSelected: (String) -> Unit,
     onNavigateBack: () -> Unit,
+    accentTheme: String = PrestigeTheme.OBSIDIAN_GOLD.id,
+    onAccentSelected: (String) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
+    val selectedAccent = PrestigeTheme.fromString(accentTheme)
     val selectedChoice = ThemeChoice.entries.firstOrNull { it.mode == themeMode } ?: ThemeChoice.SYSTEM
 
     Column(
@@ -193,6 +199,35 @@ fun AppearanceScreen(
                     )
                 }
             }
+
+            Spacer(Modifier.height(24.dp))
+            Text(
+                text = "ACCENT COLOUR",
+                style = MaterialTheme.typography.labelSmall,
+                letterSpacing = 1.2.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(horizontal = 4.dp, vertical = 8.dp)
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth().selectableGroup().testTag("appearance_accent_row"),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                PrestigeTheme.entries.forEach { option ->
+                    AccentSwatch(
+                        option = option,
+                        selected = option == selectedAccent,
+                        onClick = { if (option != selectedAccent) onAccentSelected(option.id) },
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+            }
+            Spacer(Modifier.height(6.dp))
+            Text(
+                text = "${selectedAccent.title}: ${selectedAccent.subtitle}. Buttons, highlights and charts use this colour.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(horizontal = 4.dp)
+            )
 
             Spacer(Modifier.height(20.dp))
 
@@ -393,5 +428,49 @@ private fun DrawScope.drawMiniFlowly(p: MiniPalette) {
         val cy = navY + navH / 2f
         if (i == 2) drawCircle(p.accent, radius = navH * 0.2f, center = Offset(cx, cy))
         else drawCircle(p.subtle, radius = navH * 0.12f, center = Offset(cx, cy))
+    }
+}
+
+
+// -----------------------------------------------------------------------------
+// Accent colour swatch
+// -----------------------------------------------------------------------------
+
+@Composable
+private fun AccentSwatch(
+    option: PrestigeTheme,
+    selected: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val ring = if (selected) option.primaryColor else Color.Transparent
+    Column(
+        modifier = modifier
+            .clip(RoundedCornerShape(16.dp))
+            .selectable(selected = selected, role = Role.RadioButton, onClick = onClick)
+            .padding(vertical = 6.dp)
+            .testTag("appearance_accent_${option.id.lowercase()}"),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Box(
+            modifier = Modifier
+                .size(62.dp)
+                .border(2.dp, ring, CircleShape)
+                .padding(5.dp)
+                .clip(CircleShape)
+                .background(option.primaryColor),
+            contentAlignment = Alignment.Center
+        ) {
+            if (selected) {
+                Icon(Icons.Default.Check, contentDescription = null, tint = Color.White, modifier = Modifier.size(24.dp))
+            }
+        }
+        Spacer(Modifier.height(6.dp))
+        Text(
+            text = option.title,
+            style = MaterialTheme.typography.labelMedium.copy(fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal),
+            color = if (selected) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = TextAlign.Center
+        )
     }
 }

@@ -1,5 +1,5 @@
 
-name: Build Flowly debug APK
+name: Build Flowly debug APK (testing only - not updatable, use release.yml for real releases)
 
 on:
   workflow_dispatch:

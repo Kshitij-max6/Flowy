@@ -260,7 +260,7 @@ object AppUpdateManager {
 
     /** Saves a safety copy of the data, then opens the system installer. */
     fun install(context: Context, apk: File) {
-        DatabaseSafety.createPreUpdateBackup(context)
+        DatabaseSafety.createPreUpdateBackup(context, checkpointFirst = true)
         val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", apk)
         context.startActivity(
             Intent(Intent.ACTION_VIEW).apply {

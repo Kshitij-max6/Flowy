@@ -18,7 +18,7 @@ android {
     minSdk = 26
     targetSdk = 36
     // CI passes these from the release tag (see RELEASING.md); local builds fall back to the defaults.
-    versionCode = (System.getenv("VERSION_CODE") ?: "2").toInt()
+    versionCode = (System.getenv("VERSION_CODE") ?: "10100").toInt()
     versionName = System.getenv("VERSION_NAME") ?: "1.1.0"
 
     // GitHub "owner/repo" whose Releases the in-app updater checks. Release CI sets it automatically.

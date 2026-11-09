@@ -356,7 +356,7 @@ abstract class AppDatabase : RoomDatabase() {
                 db.execSQL("CREATE INDEX IF NOT EXISTS `index_transactions_bookId` ON `transactions` (`bookId`)")
 
                 // 3. Prepopulate default expense books
-                val books = DatabasePrepopulate.getDefaultExpenseBooks()
+                val books = DatabasePrepopulate.getStarterExpenseBooks()
                 for (book in books) {
                     val isArch = if (book.isArchived) 1 else 0
                     val isDef = if (book.isDefault) 1 else 0
@@ -387,21 +387,9 @@ abstract class AppDatabase : RoomDatabase() {
                             CoroutineScope(Dispatchers.IO).launch {
                                 INSTANCE?.let { database ->
                                     database.categoryDao().insertCategories(DatabasePrepopulate.getDefaultCategories())
-                                    database.accountDao().insertAccounts(DatabasePrepopulate.getDefaultAccounts())
+                                    database.accountDao().insertAccounts(DatabasePrepopulate.getStarterAccounts())
                                     database.userSettingsDao().insertOrUpdate(DatabasePrepopulate.getDefaultUserSettings())
-                                    database.recurringTransactionDao().insertRecurringList(DatabasePrepopulate.getDefaultRecurring())
-                                    database.expenseBookDao().insertBooks(DatabasePrepopulate.getDefaultExpenseBooks())
-                                    for (tx in DatabasePrepopulate.getInitialSampleTransactions()) {
-                                        database.transactionDao().insertTransaction(tx)
-                                    }
-                                    database.budgetDao().insertBudgets(DatabasePrepopulate.getDefaultBudgets())
-                                    database.goalDao().insertGoals(DatabasePrepopulate.getDefaultGoals())
-                                    database.goalDao().insertContributions(DatabasePrepopulate.getDefaultGoalContributions())
-                                    database.creditCardDao().insertCards(DatabasePrepopulate.getDefaultCreditCards())
-                                    database.loanDao().insertLoans(DatabasePrepopulate.getDefaultLoans())
-                                    database.loanDao().insertPayments(DatabasePrepopulate.getDefaultLoanPayments())
-                                    database.netWorthDao().insertSnapshots(DatabasePrepopulate.getDefaultNetWorthSnapshots())
-                                    database.savedFilterDao().insertSavedFilters(DatabasePrepopulate.getDefaultSavedFilters())
+                                    database.expenseBookDao().insertBooks(DatabasePrepopulate.getStarterExpenseBooks())
                                 }
                             }
                         }

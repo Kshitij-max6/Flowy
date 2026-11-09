@@ -53,6 +53,9 @@ class MainActivity : ComponentActivity() {
         }
 
         val database = AppDatabase.getDatabase(applicationContext)
+
+        // One-time removal of the demo data older versions installed. Only exact demo rows are touched.
+        removeSampleDataOnce(database)
         repository = FlowlyRepositoryImpl(
             categoryDao = database.categoryDao(),
             accountDao = database.accountDao(),
@@ -144,6 +147,20 @@ class MainActivity : ComponentActivity() {
             ShortcutManagerCompat.addDynamicShortcuts(this, listOf(voiceShortcut, addShortcut))
         } catch (_: Exception) {
             // Gracefully ignore shortcut errors on older devices / test runners
+        }
+    }
+
+    private fun removeSampleDataOnce(database: AppDatabase) {
+        val prefs = getSharedPreferences("flowly_safety", MODE_PRIVATE)
+        if (prefs.getBoolean("sample_data_removed_v1", false)) return
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                // A fresh install has no demo rows; an upgraded one gets them removed.
+                com.example.core.util.SampleDataCleaner.removeSampleData(database)
+                prefs.edit().putBoolean("sample_data_removed_v1", true).apply()
+            } catch (_: Exception) {
+                // Try again next launch; nothing was changed because the cleanup runs in one transaction.
+            }
         }
     }
 

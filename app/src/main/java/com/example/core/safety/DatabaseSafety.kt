@@ -29,17 +29,26 @@ object DatabaseSafety {
     fun backupIfAppVersionChanged(context: Context) {
         val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         val last = prefs.getInt(KEY_LAST_VERSION_CODE, -1)
-        if (last != -1 && last != BuildConfig.VERSION_CODE) {
+        // last == -1 means this is the first launch of a build that tracks versions, i.e. an upgrade from an
+        // older build when a database already exists (a brand-new install has no file, so nothing is copied).
+        if (last != BuildConfig.VERSION_CODE) {
             createPreUpdateBackup(context)
         }
         prefs.edit().putInt(KEY_LAST_VERSION_CODE, BuildConfig.VERSION_CODE).apply()
     }
 
     /** Copies db + wal + shm. Returns true when the main database file was copied. */
-    fun createPreUpdateBackup(context: Context): Boolean {
+    fun createPreUpdateBackup(context: Context, checkpointFirst: Boolean = false): Boolean {
         return try {
             val main = context.getDatabasePath(DB_NAME)
             if (!main.exists()) return false
+            if (checkpointFirst) {
+                // Fold the write-ahead log into the main file so the copy is complete on its own.
+                try {
+                    com.example.data.local.AppDatabase.getDatabase(context).openHelper.writableDatabase
+                        .query("PRAGMA wal_checkpoint(FULL)").use { it.moveToFirst() }
+                } catch (_: Exception) { /* the -wal/-shm copies below still make the backup consistent */ }
+            }
             val dir = backupDir(context).apply { mkdirs() }
             // Write to temp names first so a crash never leaves a half-replaced good backup.
             val staged = mutableListOf<Pair<File, File>>()

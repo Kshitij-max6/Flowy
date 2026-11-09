@@ -141,6 +141,25 @@ object DatabasePrepopulate {
         )
     }
 
+    /** What a brand-new install gets: one empty account so the first entry can be added. No sample money. */
+    fun getStarterAccounts(): List<AccountEntity> = listOf(
+        AccountEntity(id = 1, name = "Cash", type = "CASH", balance = 0.0, currency = "₹", iconName = "Payments", colorHex = "#10B981", isDefault = true)
+    )
+
+    /** A brand-new install gets only the default ledger, with no budget and no sample books. */
+    fun getStarterExpenseBooks(): List<com.example.data.local.entity.ExpenseBookEntity> {
+        val now = System.currentTimeMillis()
+        return listOf(
+            com.example.data.local.entity.ExpenseBookEntity(
+                id = 1, name = "Personal & Daily", description = "", iconName = "Wallet", colorHex = "#E5C378",
+                budget = 0.0, isArchived = false, isDefault = true, createdAt = now, updatedAt = now
+            )
+        )
+    }
+
+    // NOTE: the getDefault* / getInitialSample* lists below are the OLD demo data. They are no longer
+    // inserted anywhere; they are kept only so SampleDataCleaner can recognise and remove them from
+    // installs that already received them.
     fun getDefaultAccounts(): List<AccountEntity> {
         return listOf(
             AccountEntity(id = 1, name = "Main Bank", type = "BANK", balance = 34500.0, currency = "₹", iconName = "AccountBalance", colorHex = "#3B82F6", isDefault = true),
