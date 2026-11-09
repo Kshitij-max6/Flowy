@@ -663,20 +663,21 @@ class FlowlyRepositoryImpl(
                     )
                 }
                 TimeFilter.THIS_MONTH -> {
-                    val oneMonthAgo = now - (30L * 24 * 60 * 60 * 1000)
-                    val twoMonthsAgo = now - (60L * 24 * 60 * 60 * 1000)
+                    val thisMonth = com.example.core.util.PeriodRanges.thisMonth(now)
+                    val lastMonth = com.example.core.util.PeriodRanges.lastMonth(now)
+                    // Like-for-like: the same number of days of last month
+                    val elapsed = (now - thisMonth.start).coerceIn(1L, lastMonth.length)
                     Pair(
-                        txList.filter { it.dateTime >= oneMonthAgo && it.dateTime <= now },
-                        txList.filter { it.dateTime >= twoMonthsAgo && it.dateTime < oneMonthAgo }
+                        txList.filter { it.dateTime in thisMonth },
+                        txList.filter { it.dateTime >= lastMonth.start && it.dateTime < lastMonth.start + elapsed }
                     )
                 }
                 TimeFilter.LAST_MONTH -> {
-                    val oneMonthAgo = now - (30L * 24 * 60 * 60 * 1000)
-                    val twoMonthsAgo = now - (60L * 24 * 60 * 60 * 1000)
-                    val threeMonthsAgo = now - (90L * 24 * 60 * 60 * 1000)
+                    val lastMonth = com.example.core.util.PeriodRanges.lastMonth(now)
+                    val monthBefore = com.example.core.util.PeriodRanges.monthStart(now, -2)
                     Pair(
-                        txList.filter { it.dateTime >= twoMonthsAgo && it.dateTime < oneMonthAgo },
-                        txList.filter { it.dateTime >= threeMonthsAgo && it.dateTime < twoMonthsAgo }
+                        txList.filter { it.dateTime in lastMonth },
+                        txList.filter { it.dateTime >= monthBefore && it.dateTime < lastMonth.start }
                     )
                 }
                 TimeFilter.ALL_TIME -> {
@@ -855,15 +856,18 @@ class FlowlyRepositoryImpl(
             val weekPct = if (lastWeekExpenses > 0) ((weekDiff / lastWeekExpenses) * 100.0) else 0.0
 
             // Month vs Last Month
-            val oneMonthAgo = now - (30L * 24 * 60 * 60 * 1000)
-            val twoMonthsAgo = now - (60L * 24 * 60 * 60 * 1000)
-            val thisMonthExpenses = txList.filter { it.type == "EXPENSE" && it.dateTime in oneMonthAgo..now }.sumOf { it.amount }
-            val lastMonthExpenses = txList.filter { it.type == "EXPENSE" && it.dateTime in twoMonthsAgo until oneMonthAgo }.sumOf { it.amount }
+            val calThisMonth = com.example.core.util.PeriodRanges.thisMonth(now)
+            val calLastMonth = com.example.core.util.PeriodRanges.lastMonth(now)
+            val elapsedThisMonth = (now - calThisMonth.start).coerceIn(1L, calLastMonth.length)
+            val thisMonthExpenses = txList.filter { it.type == "EXPENSE" && it.dateTime in calThisMonth }.sumOf { it.amount }
+            val lastMonthExpenses = txList.filter {
+                it.type == "EXPENSE" && it.dateTime >= calLastMonth.start && it.dateTime < calLastMonth.start + elapsedThisMonth
+            }.sumOf { it.amount }
             val monthDiff = thisMonthExpenses - lastMonthExpenses
             val monthPct = if (lastMonthExpenses > 0) ((monthDiff / lastMonthExpenses) * 100.0) else 0.0
 
             // Top category this month
-            val thisMonthExpenseTx = txList.filter { it.type == "EXPENSE" && it.dateTime in oneMonthAgo..now }
+            val thisMonthExpenseTx = txList.filter { it.type == "EXPENSE" && it.dateTime in calThisMonth }
             val catSpending = thisMonthExpenseTx.groupBy { it.categoryId }.mapValues { entry -> entry.value.sumOf { it.amount } }
             val topEntry = catSpending.maxByOrNull { it.value }
             val topCategoryName = topEntry?.let { catMap[it.key]?.name ?: "Food & Dining" }

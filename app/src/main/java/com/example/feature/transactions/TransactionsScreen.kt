@@ -369,6 +369,23 @@ fun TransactionsScreen(
                 border = BorderStroke(1.dp, if (uiState.selectedDateFilter == DateFilterType.THIS_MONTH) EmeraldPrimary else MaterialTheme.colorScheme.outlineVariant),
                 shape = RoundedCornerShape(12.dp)
             )
+            FilterChip(
+                selected = uiState.selectedDateFilter == DateFilterType.LAST_MONTH,
+                onClick = {
+                    viewModel.onDateFilterSelected(
+                        if (uiState.selectedDateFilter == DateFilterType.LAST_MONTH) DateFilterType.ALL else DateFilterType.LAST_MONTH
+                    )
+                },
+                label = { Text("Last Month") },
+                colors = FilterChipDefaults.filterChipColors(
+                    selectedContainerColor = EmeraldPrimary,
+                    selectedLabelColor = Color.White,
+                    containerColor = MaterialTheme.colorScheme.surface,
+                    labelColor = MaterialTheme.colorScheme.onSurfaceVariant
+                ),
+                border = BorderStroke(1.dp, if (uiState.selectedDateFilter == DateFilterType.LAST_MONTH) EmeraldPrimary else MaterialTheme.colorScheme.outlineVariant),
+                shape = RoundedCornerShape(12.dp)
+            )
         }
 
         // Transactions List Grouped by Date

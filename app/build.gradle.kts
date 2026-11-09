@@ -22,7 +22,7 @@ android {
     versionName = System.getenv("VERSION_NAME") ?: "1.1.0"
 
     // GitHub "owner/repo" whose Releases the in-app updater checks. Release CI sets it automatically.
-    buildConfigField("String", "UPDATE_REPO", "\"${System.getenv("UPDATE_REPO") ?: "OWNER/Final-Flowly"}\"")
+    buildConfigField("String", "UPDATE_REPO", "\"${System.getenv("UPDATE_REPO") ?: (project.findProperty("flowly.updateRepo") as String?) ?: "OWNER/Final-Flowly"}\"")
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }

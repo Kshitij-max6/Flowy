@@ -50,6 +50,8 @@ jobs:
           fi
 
       - name: Build debug APK
+        env:
+          UPDATE_REPO: ${{ github.repository }}
         run: gradle :app:assembleDebug --stacktrace
 
       - name: Upload APK

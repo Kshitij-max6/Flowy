@@ -85,7 +85,7 @@ object AppUpdateManager {
         withContext(Dispatchers.IO) {
             val repo = BuildConfig.UPDATE_REPO
             if (repo.isBlank() || repo.startsWith("OWNER/")) {
-                return@withContext UpdateCheckResult.Failed("Update source is not configured yet")
+                return@withContext UpdateCheckResult.Failed("This build doesn't know which GitHub repository to check. Build it with the release workflow, or set flowly.updateRepo=owner/repo in gradle.properties")
             }
             if (!force && !isDailyCheckDue(context)) return@withContext UpdateCheckResult.UpToDate
             try {
@@ -97,7 +97,10 @@ object AppUpdateManager {
                 }
                 if (conn.responseCode == 404) {
                     prefs(context).edit().putLong(KEY_LAST_CHECK, System.currentTimeMillis()).apply()
-                    return@withContext UpdateCheckResult.UpToDate
+                    // 404 = no published release yet, a wrong repo name, or a private repository.
+                    return@withContext if (force) UpdateCheckResult.Failed(
+                        "No published release found in $repo. The repository must be public and have at least one release."
+                    ) else UpdateCheckResult.UpToDate
                 }
                 if (conn.responseCode != 200) {
                     return@withContext UpdateCheckResult.Failed("GitHub answered ${conn.responseCode}")

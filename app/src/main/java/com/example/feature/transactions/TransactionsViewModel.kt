@@ -22,6 +22,7 @@ enum class DateFilterType {
     TODAY,
     THIS_WEEK,
     THIS_MONTH,
+    LAST_MONTH,
     CUSTOM
 }
 
@@ -309,8 +310,13 @@ class TransactionsViewModel(
                 filtered.filter { it.transaction.dateTime >= weekAgo }
             }
             DateFilterType.THIS_MONTH -> {
-                val monthAgo = now - (30L * 24 * 60 * 60 * 1000)
-                filtered.filter { it.transaction.dateTime >= monthAgo }
+                // Calendar month only: 1st of this month up to (not including) the 1st of next month.
+                val month = com.example.core.util.PeriodRanges.thisMonth(now)
+                filtered.filter { it.transaction.dateTime in month }
+            }
+            DateFilterType.LAST_MONTH -> {
+                val month = com.example.core.util.PeriodRanges.lastMonth(now)
+                filtered.filter { it.transaction.dateTime in month }
             }
             DateFilterType.CUSTOM -> {
                 val start = state.customStartDate ?: 0L

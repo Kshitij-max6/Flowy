@@ -1,5 +1,6 @@
 package com.example.feature.analytics
 
+import com.example.core.util.PeriodRanges
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
@@ -68,13 +69,13 @@ class AnalyticsViewModel(
                         Pair(transactions.filter { it.transaction.dateTime >= weekAgo }, null)
                     }
                     TimeFilter.THIS_MONTH -> {
-                        val monthAgo = now - (30L * 24 * 60 * 60 * 1000)
-                        Pair(transactions.filter { it.transaction.dateTime >= monthAgo }, null)
+                        // The calendar month we are in, e.g. 1 Nov - 30 Nov (not "the last 30 days").
+                        val month = PeriodRanges.thisMonth(now)
+                        Pair(transactions.filter { it.transaction.dateTime in month }, null)
                     }
                     TimeFilter.LAST_MONTH -> {
-                        val monthAgo = now - (30L * 24 * 60 * 60 * 1000)
-                        val twoMonthsAgo = now - (60L * 24 * 60 * 60 * 1000)
-                        Pair(transactions.filter { it.transaction.dateTime in twoMonthsAgo..monthAgo }, null)
+                        val month = PeriodRanges.lastMonth(now)
+                        Pair(transactions.filter { it.transaction.dateTime in month }, null)
                     }
                     TimeFilter.ALL_TIME -> {
                         Pair(transactions, null)
@@ -84,20 +85,29 @@ class AnalyticsViewModel(
                 val periodStart = filteredTx.minOfOrNull { it.transaction.dateTime } ?: now
                 val periodLength = when (state.selectedTimeFilter) {
                     TimeFilter.THIS_WEEK -> 7L * 24 * 60 * 60 * 1000
-                    TimeFilter.THIS_MONTH, TimeFilter.LAST_MONTH -> 30L * 24 * 60 * 60 * 1000
+                    TimeFilter.THIS_MONTH -> PeriodRanges.thisMonth(now).length
+                    TimeFilter.LAST_MONTH -> PeriodRanges.lastMonth(now).length
                     TimeFilter.ALL_TIME -> (now - periodStart).coerceAtLeast(1L)
                 }
-                val previousEnd = when (state.selectedTimeFilter) {
-                    TimeFilter.LAST_MONTH -> now - 60L * 24 * 60 * 60 * 1000
-                    else -> now - periodLength
+                // Comparison window. This month is compared with the same number of days of last month,
+                // so a half-finished month is not set against a complete one.
+                val (previousFrom, previousTo) = when (state.selectedTimeFilter) {
+                    TimeFilter.THIS_MONTH -> {
+                        val last = PeriodRanges.lastMonth(now)
+                        val elapsed = (now - PeriodRanges.thisMonth(now).start).coerceIn(1L, last.length)
+                        last.start to (last.start + elapsed)
+                    }
+                    TimeFilter.LAST_MONTH -> PeriodRanges.monthStart(now, -2) to PeriodRanges.lastMonth(now).start
+                    else -> (now - periodLength * 2) to (now - periodLength)
                 }
                 val previousExpense = transactions.filter {
                     it.transaction.type == TransactionType.EXPENSE &&
-                        it.transaction.dateTime >= previousEnd - periodLength &&
-                        it.transaction.dateTime < previousEnd
+                        it.transaction.dateTime >= previousFrom &&
+                        it.transaction.dateTime < previousTo
                 }.sumOf { it.transaction.amount }
                 val trendStart = when (state.selectedTimeFilter) {
-                    TimeFilter.LAST_MONTH -> now - 60L * 24 * 60 * 60 * 1000
+                    TimeFilter.THIS_MONTH -> PeriodRanges.thisMonth(now).start
+                    TimeFilter.LAST_MONTH -> PeriodRanges.lastMonth(now).start
                     TimeFilter.ALL_TIME -> periodStart
                     else -> now - periodLength
                 }
@@ -119,7 +129,12 @@ class AnalyticsViewModel(
                 val totalExp = expenses.sumOf { it.transaction.amount }
                 val totalInc = income.sumOf { it.transaction.amount }
                 val netFlow = totalInc - totalExp
-                val periodDays = (periodLength / (24L * 60 * 60 * 1000)).toInt().coerceAtLeast(1)
+                val dayMs = 24L * 60 * 60 * 1000
+                val periodDays = when (state.selectedTimeFilter) {
+                    // Daily average of the days that have actually happened so far this month
+                    TimeFilter.THIS_MONTH -> (((now - PeriodRanges.thisMonth(now).start) / dayMs).toInt() + 1)
+                    else -> (periodLength / dayMs).toInt()
+                }.coerceAtLeast(1)
                 val largest = expenses.maxByOrNull { it.transaction.amount }
 
                 // Group expenses by category
