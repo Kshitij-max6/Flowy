@@ -54,6 +54,16 @@ jobs:
           UPDATE_REPO: ${{ github.repository }}
         run: gradle :app:assembleDebug --stacktrace
 
+      # Fails the build if the repository the in-app updater should check did not reach the APK.
+      - name: Verify the update repository is baked into the APK
+        env:
+          UPDATE_REPO: ${{ github.repository }}
+        run: |
+          APK=$(ls app/build/outputs/apk/debug/*.apk | head -n1)
+          unzip -p "$APK" 'classes*.dex' | grep -a -F -q -- "$UPDATE_REPO" \
+            || { echo "::error::$APK does not contain the update repository $UPDATE_REPO"; exit 1; }
+          echo "Update repository baked into $APK: $UPDATE_REPO"
+
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:

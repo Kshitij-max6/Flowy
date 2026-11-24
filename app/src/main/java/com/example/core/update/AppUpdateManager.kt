@@ -12,11 +12,16 @@ import com.example.BuildConfig
 import com.example.core.safety.DatabaseSafety
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import org.json.JSONException
 import org.json.JSONObject
 import java.io.File
+import java.net.ConnectException
 import java.net.HttpURLConnection
+import java.net.SocketTimeoutException
 import java.net.URL
+import java.net.UnknownHostException
 import java.security.MessageDigest
+import javax.net.ssl.SSLException
 
 data class UpdateInfo(
     val versionName: String,
@@ -81,70 +86,128 @@ object AppUpdateManager {
 
     // ---------------------------------------------------------------- check
 
+    private const val GITHUB_API = "https://api.github.com"
+    private val REPO_PATTERN = Regex("[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+")
+    private val VERSION_PATTERN = Regex("\\d+(\\.\\d+)*")
+
+    internal const val MSG_BAD_REPO =
+        "This build doesn't know which GitHub repository to check. Build it with the release workflow, or set flowly.updateRepo=owner/repo in gradle.properties"
+
+    /** `owner/repo`, and not the unconfigured `OWNER/...` placeholder. */
+    internal fun isValidRepo(repo: String): Boolean =
+        REPO_PATTERN.matches(repo) && !repo.startsWith("OWNER/", ignoreCase = true)
+
     suspend fun checkForUpdate(context: Context, force: Boolean = false): UpdateCheckResult =
         withContext(Dispatchers.IO) {
             val repo = BuildConfig.UPDATE_REPO
-            if (repo.isBlank() || repo.startsWith("OWNER/")) {
-                return@withContext UpdateCheckResult.Failed("This build doesn't know which GitHub repository to check. Build it with the release workflow, or set flowly.updateRepo=owner/repo in gradle.properties")
-            }
+            if (!isValidRepo(repo)) return@withContext UpdateCheckResult.Failed(MSG_BAD_REPO)
             if (!force && !isDailyCheckDue(context)) return@withContext UpdateCheckResult.UpToDate
-            try {
-                val conn = (URL("https://api.github.com/repos/$repo/releases/latest").openConnection() as HttpURLConnection).apply {
-                    connectTimeout = 10_000
-                    readTimeout = 15_000
-                    setRequestProperty("Accept", "application/vnd.github+json")
-                    setRequestProperty("User-Agent", "Flowly-Android/${BuildConfig.VERSION_NAME}")
-                }
-                if (conn.responseCode == 404) {
-                    prefs(context).edit().putLong(KEY_LAST_CHECK, System.currentTimeMillis()).apply()
+            fetchLatest(repo, BuildConfig.VERSION_NAME, force) {
+                prefs(context).edit().putLong(KEY_LAST_CHECK, System.currentTimeMillis()).apply()
+            }
+        }
+
+    /**
+     * Asks GitHub for [repo]'s latest release and decides whether it is newer than [currentVersion].
+     * [markChecked] runs once GitHub has given a usable answer (so a failed attempt is retried sooner).
+     * [apiBase] exists so tests can point this at a local server.
+     */
+    internal fun fetchLatest(
+        repo: String,
+        currentVersion: String,
+        force: Boolean,
+        apiBase: String = GITHUB_API,
+        markChecked: () -> Unit = {}
+    ): UpdateCheckResult {
+        if (!isValidRepo(repo)) return UpdateCheckResult.Failed(MSG_BAD_REPO)
+        return try {
+            val conn = (URL("$apiBase/repos/$repo/releases/latest").openConnection() as HttpURLConnection).apply {
+                connectTimeout = 10_000
+                readTimeout = 15_000
+                setRequestProperty("Accept", "application/vnd.github+json")
+                setRequestProperty("User-Agent", "Flowly-Android/$currentVersion")
+            }
+            val code = conn.responseCode
+            when {
+                code == 404 -> {
+                    markChecked()
                     // 404 = no published release yet, a wrong repo name, or a private repository.
-                    return@withContext if (force) UpdateCheckResult.Failed(
+                    if (force) UpdateCheckResult.Failed(
                         "No published release found in $repo. The repository must be public and have at least one release."
                     ) else UpdateCheckResult.UpToDate
                 }
-                if (conn.responseCode != 200) {
-                    return@withContext UpdateCheckResult.Failed("GitHub answered ${conn.responseCode}")
-                }
-                val json = JSONObject(conn.inputStream.bufferedReader().use { it.readText() })
-                prefs(context).edit().putLong(KEY_LAST_CHECK, System.currentTimeMillis()).apply()
-
-                if (json.optBoolean("draft") || json.optBoolean("prerelease")) return@withContext UpdateCheckResult.UpToDate
-
-                val tag = json.optString("tag_name").removePrefix("v").removePrefix("V")
-                if (!isNewer(tag, BuildConfig.VERSION_NAME)) return@withContext UpdateCheckResult.UpToDate
-
-                val assets = json.optJSONArray("assets")
-                var apk: JSONObject? = null
-                var shaAsset: String? = null
-                if (assets != null) {
-                    for (i in 0 until assets.length()) {
-                        val a = assets.getJSONObject(i)
-                        val name = a.optString("name")
-                        if (name.endsWith(".apk", true) && apk == null) apk = a
-                        if (name.endsWith(".sha256", true)) shaAsset = a.optString("browser_download_url")
-                    }
-                }
-                val apkAsset = apk ?: return@withContext UpdateCheckResult.Failed("Release has no APK attached")
-
-                var sha = apkAsset.optString("digest").removePrefix("sha256:").takeIf { it.length == 64 }
-                if (sha == null && shaAsset != null) sha = fetchSha(shaAsset)
-
-                val notes = json.optString("body")
-                UpdateCheckResult.Available(
-                    UpdateInfo(
-                        versionName = tag,
-                        notes = notes.replace("[required]", "", ignoreCase = true).trim(),
-                        required = notes.contains("[required]", ignoreCase = true),
-                        apkUrl = apkAsset.optString("browser_download_url"),
-                        apkSizeBytes = apkAsset.optLong("size"),
-                        sha256 = sha?.lowercase(),
-                        releasePageUrl = json.optString("html_url")
-                    )
+                code != 200 -> UpdateCheckResult.Failed(
+                    httpFailureMessage(code, conn.getHeaderField("X-RateLimit-Remaining"), conn.getHeaderField("Retry-After"))
                 )
-            } catch (e: Exception) {
-                UpdateCheckResult.Failed(e.localizedMessage ?: "Could not reach GitHub")
+                else -> {
+                    val body = conn.inputStream.bufferedReader().use { it.readText() }
+                    markChecked()
+                    parseRelease(body, currentVersion) { fetchSha(it) }
+                }
+            }
+        } catch (e: Exception) {
+            UpdateCheckResult.Failed(describeFailure(e))
+        }
+    }
+
+    /** Turns GitHub's `releases/latest` JSON into a result; anything unexpected is a failure, never an update. */
+    internal fun parseRelease(body: String, currentVersion: String, fetchSha: (String) -> String?): UpdateCheckResult {
+        val json = try {
+            JSONObject(body)
+        } catch (_: JSONException) {
+            return UpdateCheckResult.Failed("GitHub sent a reply the app couldn't understand. Please try again later.")
+        }
+
+        if (json.optBoolean("draft") || json.optBoolean("prerelease")) return UpdateCheckResult.UpToDate
+
+        val tag = json.optString("tag_name").trim().removePrefix("v").removePrefix("V")
+        if (tag.isEmpty()) return UpdateCheckResult.Failed("GitHub sent a release without a version. Please try again later.")
+        if (!isNewer(tag, currentVersion)) return UpdateCheckResult.UpToDate
+
+        val assets = json.optJSONArray("assets")
+        var apk: JSONObject? = null
+        var shaAsset: String? = null
+        if (assets != null) {
+            for (i in 0 until assets.length()) {
+                val a = assets.optJSONObject(i) ?: continue
+                val name = a.optString("name")
+                if (name.endsWith(".apk", true) && apk == null) apk = a
+                if (name.endsWith(".sha256", true)) shaAsset = a.optString("browser_download_url")
             }
         }
+        val apkAsset = apk?.takeIf { it.optString("browser_download_url").isNotBlank() }
+            ?: return UpdateCheckResult.Failed("Release has no APK attached")
+
+        var sha = apkAsset.optString("digest").removePrefix("sha256:").takeIf { it.length == 64 }
+        if (sha == null && !shaAsset.isNullOrBlank()) sha = fetchSha(shaAsset)
+
+        val notes = json.optString("body")
+        return UpdateCheckResult.Available(
+            UpdateInfo(
+                versionName = tag,
+                notes = notes.replace("[required]", "", ignoreCase = true).trim(),
+                required = notes.contains("[required]", ignoreCase = true),
+                apkUrl = apkAsset.optString("browser_download_url"),
+                apkSizeBytes = apkAsset.optLong("size"),
+                sha256 = sha?.lowercase(),
+                releasePageUrl = json.optString("html_url")
+            )
+        )
+    }
+
+    /** Wording for a non-200/404 answer. GitHub signals rate limits with 429, or 403 plus a spent quota / Retry-After. */
+    internal fun httpFailureMessage(code: Int, rateLimitRemaining: String?, retryAfter: String?): String = when {
+        code == 429 || (code == 403 && (rateLimitRemaining == "0" || retryAfter != null)) ->
+            "GitHub's limit on update checks was reached. Please try again in a little while."
+        code in 500..599 -> "GitHub is having trouble right now ($code). Please try again later."
+        else -> "GitHub answered $code"
+    }
+
+    internal fun describeFailure(e: Exception): String = when (e) {
+        is UnknownHostException, is ConnectException, is SocketTimeoutException, is SSLException ->
+            "Couldn't reach GitHub. Check your internet connection and try again."
+        else -> e.localizedMessage ?: "Could not reach GitHub"
+    }
 
     private fun fetchSha(url: String): String? = try {
         val conn = URL(url).openConnection() as HttpURLConnection
@@ -153,15 +216,24 @@ object AppUpdateManager {
             ?.takeIf { it.length == 64 }
     } catch (_: Exception) { null }
 
-    /** Numeric semantic comparison, ignores suffixes like -beta. */
+    /**
+     * Numeric semantic comparison, ignores suffixes like -beta. Anything that isn't a dotted number
+     * (`nightly`, `release-2024`, an empty tag) is never "newer", so a stray tag can't trigger a false update.
+     */
     internal fun isNewer(candidate: String, current: String): Boolean {
-        fun parts(v: String) = v.substringBefore('-').split('.').map { it.filter(Char::isDigit).toIntOrNull() ?: 0 }
-        val a = parts(candidate); val b = parts(current)
+        val a = numericParts(candidate) ?: return false
+        val b = numericParts(current) ?: return false
         for (i in 0 until maxOf(a.size, b.size)) {
             val x = a.getOrElse(i) { 0 }; val y = b.getOrElse(i) { 0 }
             if (x != y) return x > y
         }
         return false
+    }
+
+    private fun numericParts(version: String): List<Int>? {
+        val core = version.trim().removePrefix("v").removePrefix("V").substringBefore('-').substringBefore('+')
+        if (!VERSION_PATTERN.matches(core)) return null
+        return core.split('.').map { it.toIntOrNull() ?: return null }
     }
 
     // ---------------------------------------------------------------- download + verify

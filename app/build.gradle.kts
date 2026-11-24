@@ -9,6 +9,24 @@ plugins {
   alias(libs.plugins.google.services)
 }
 
+// GitHub "owner/repo" whose Releases the in-app updater checks (see RELEASING.md).
+// Source of truth is `flowly.updateRepo` in gradle.properties; CI may override it with the UPDATE_REPO
+// environment variable. Blank values are ignored (an unset GitHub Actions variable arrives as ""), and a
+// missing, malformed or placeholder value fails the build instead of shipping an APK whose updater can't work.
+val updateRepo: String = run {
+  val fromEnv = System.getenv("UPDATE_REPO")?.trim().orEmpty()
+  val fromProperty = (project.findProperty("flowly.updateRepo") as String?)?.trim().orEmpty()
+  val repo = fromEnv.ifEmpty { fromProperty }
+  val valid = Regex("[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+").matches(repo) && !repo.startsWith("OWNER/", ignoreCase = true)
+  if (!valid) {
+    throw GradleException(
+      "Invalid update repository \"$repo\". Set flowly.updateRepo=owner/repo in gradle.properties " +
+        "(or the UPDATE_REPO environment variable) to the GitHub repository that hosts the Flowly releases."
+    )
+  }
+  repo
+}
+
 android {
   namespace = "com.example"
   compileSdk { version = release(36) { minorApiLevel = 1 } }
@@ -21,8 +39,8 @@ android {
     versionCode = (System.getenv("VERSION_CODE") ?: "10100").toInt()
     versionName = System.getenv("VERSION_NAME") ?: "1.1.0"
 
-    // GitHub "owner/repo" whose Releases the in-app updater checks. Release CI sets it automatically.
-    buildConfigField("String", "UPDATE_REPO", "\"${System.getenv("UPDATE_REPO") ?: (project.findProperty("flowly.updateRepo") as String?) ?: "OWNER/Final-Flowly"}\"")
+    // Applies to every build type (debug and release); value resolved by `updateRepo` above.
+    buildConfigField("String", "UPDATE_REPO", "\"$updateRepo\"")
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }

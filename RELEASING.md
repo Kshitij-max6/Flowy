@@ -28,8 +28,14 @@ that the new APK is signed with the **same key** as the installed app.
 
 3. Never commit the `.jks` file. (`*.jks` is in `.gitignore`.)
 
-The workflow sets `UPDATE_REPO` to `owner/repo` automatically, so the app knows where to look.
-For local builds you can export `UPDATE_REPO=yourname/Final-Flowly`.
+The repository the app checks is `flowly.updateRepo` in `gradle.properties` (currently `Kshitij-max6/Flowy`); Gradle
+copies it into `BuildConfig.UPDATE_REPO` for every build type, so local, debug and release builds all know where to look.
+The CI workflows also pass `UPDATE_REPO=${{ github.repository }}`, which overrides it (handy for forks), and each workflow
+then checks that the repository really is inside the APK it just built. A missing, malformed or `OWNER/...` placeholder value
+fails the build. If you ever rename or move the repository, change `flowly.updateRepo`.
+
+Until the first release exists, Settings → **App updates** answers "No published release found" — that is expected; publish
+a `v*` tag (below) and the updater has something to find.
 
 ## Publishing a version
 
