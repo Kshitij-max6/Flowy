@@ -34,15 +34,25 @@ jobs:
         with:
           gradle-version: 9.3.1
 
-      - name: Work out version from the tag
+      - name: Work out and validate version from the tag
         id: ver
         run: |
           TAG="${GITHUB_REF_NAME}"
-          NAME="${TAG#v}"
-          IFS='.' read -r MAJ MIN PAT <<< "${NAME%%-*}"
-          CODE=$(( ${MAJ:-0} * 10000 + ${MIN:-0} * 100 + ${PAT:-0} ))
+          # Accept v1.2.0, V1.2.0, or 1.2.0; reject malformed tags.
+          NAME="$(printf '%s' "$TAG" | sed -E 's/^[vV]//')"
+          if ! [[ "$NAME" =~ ^[0-9]+\\.[0-9]+\\.[0-9]+$ ]]; then
+            echo "::error::Release tag must be vMAJOR.MINOR.PATCH (example: v1.2.0); got $TAG"
+            exit 1
+          fi
+          IFS='.' read -r MAJ MIN PAT <<< "$NAME"
+          CODE=$(( MAJ * 10000 + MIN * 100 + PAT ))
+          if [ "$CODE" -le 10100 ]; then
+            echo "::error::Calculated versionCode $CODE must be greater than the Flowly 1.1.0 baseline (10100)."
+            exit 1
+          fi
           echo "name=$NAME" >> "$GITHUB_OUTPUT"
           echo "code=$CODE" >> "$GITHUB_OUTPUT"
+          echo "Release versionName=$NAME versionCode=$CODE"
 
       - name: Restore the permanent release keystore
         env:
@@ -72,6 +82,15 @@ jobs:
           VERSION_CODE: ${{ steps.ver.outputs.code }}
           UPDATE_REPO: ${{ github.repository }}
         run: gradle :app:assembleRelease --stacktrace
+
+      - name: Verify APK version metadata matches the release tag
+        run: |
+          APK=$(ls app/build/outputs/apk/release/*.apk | head -n1)
+          AAPT="$ANDROID_HOME/build-tools/36.0.0/aapt"
+          BADGING=$("$AAPT" dump badging "$APK")
+          echo "$BADGING" | grep -F "versionCode='${{ steps.ver.outputs.code }}'" >/dev/null             || { echo "::error::APK versionCode does not match tag-derived versionCode"; exit 1; }
+          echo "$BADGING" | grep -F "versionName='${{ steps.ver.outputs.name }}'" >/dev/null             || { echo "::error::APK versionName does not match tag-derived versionName"; exit 1; }
+          echo "Verified APK metadata for ${{ steps.ver.outputs.name }} (${{ steps.ver.outputs.code }})"
 
       # Fails the build if the repository the in-app updater should check did not reach the APK.
       - name: Verify the update repository is baked into the APK
