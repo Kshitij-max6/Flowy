@@ -1,7 +1,9 @@
+
 name: Release Flowly APK
 
 # Push a tag like v1.2.0 to publish a signed APK as a GitHub Release.
 # The in-app updater reads that release, so the signing key MUST be the same every time (see RELEASING.md).
+
 on:
   push:
     tags: ['v*']
@@ -13,6 +15,7 @@ jobs:
   release:
     runs-on: ubuntu-latest
     timeout-minutes: 45
+
     steps:
       - uses: actions/checkout@v4
 
@@ -38,27 +41,39 @@ jobs:
         id: ver
         run: |
           TAG="${GITHUB_REF_NAME}"
-          # Accept v1.2.0, V1.2.0, or 1.2.0; reject malformed tags.
+
+          # Accept v1.2.0, V1.2.0, or 1.2.0.
           NAME="$(printf '%s' "$TAG" | sed -E 's/^[vV]//')"
-          if ! [[ "$NAME" =~ ^[0-9]+\\.[0-9]+\\.[0-9]+$ ]]; then
+
+          # Validate MAJOR.MINOR.PATCH format.
+          if ! [[ "$NAME" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             echo "::error::Release tag must be vMAJOR.MINOR.PATCH (example: v1.2.0); got $TAG"
             exit 1
           fi
+
           IFS='.' read -r MAJ MIN PAT <<< "$NAME"
+
           CODE=$(( MAJ * 10000 + MIN * 100 + PAT ))
+
           if [ "$CODE" -le 10100 ]; then
             echo "::error::Calculated versionCode $CODE must be greater than the Flowly 1.1.0 baseline (10100)."
             exit 1
           fi
+
           echo "name=$NAME" >> "$GITHUB_OUTPUT"
           echo "code=$CODE" >> "$GITHUB_OUTPUT"
+
           echo "Release versionName=$NAME versionCode=$CODE"
 
       - name: Restore the permanent release keystore
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
         run: |
-          if [ -z "$KEYSTORE_BASE64" ]; then echo "KEYSTORE_BASE64 secret is missing - see RELEASING.md"; exit 1; fi
+          if [ -z "$KEYSTORE_BASE64" ]; then
+            echo "KEYSTORE_BASE64 secret is missing - see RELEASING.md"
+            exit 1
+          fi
+
           echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/flowly-release.jks"
 
       - name: Debug keystore (needed by the debug signing config)
@@ -71,7 +86,9 @@ jobs:
         env:
           GS_B64: ${{ secrets.GOOGLE_SERVICES_JSON_B64 }}
         run: |
-          if [ -n "$GS_B64" ]; then echo "$GS_B64" | base64 -d > app/google-services.json; fi
+          if [ -n "$GS_B64" ]; then
+            echo "$GS_B64" | base64 -d > app/google-services.json
+          fi
 
       - name: Build signed release APK
         env:
@@ -87,9 +104,15 @@ jobs:
         run: |
           APK=$(ls app/build/outputs/apk/release/*.apk | head -n1)
           AAPT="$ANDROID_HOME/build-tools/36.0.0/aapt"
+
           BADGING=$("$AAPT" dump badging "$APK")
-          echo "$BADGING" | grep -F "versionCode='${{ steps.ver.outputs.code }}'" >/dev/null             || { echo "::error::APK versionCode does not match tag-derived versionCode"; exit 1; }
-          echo "$BADGING" | grep -F "versionName='${{ steps.ver.outputs.name }}'" >/dev/null             || { echo "::error::APK versionName does not match tag-derived versionName"; exit 1; }
+
+          echo "$BADGING" | grep -F "versionCode='${{ steps.ver.outputs.code }}'" >/dev/null \
+            || { echo "::error::APK versionCode does not match tag-derived versionCode"; exit 1; }
+
+          echo "$BADGING" | grep -F "versionName='${{ steps.ver.outputs.name }}'" >/dev/null \
+            || { echo "::error::APK versionName does not match tag-derived versionName"; exit 1; }
+
           echo "Verified APK metadata for ${{ steps.ver.outputs.name }} (${{ steps.ver.outputs.code }})"
 
       # Fails the build if the repository the in-app updater should check did not reach the APK.
@@ -98,15 +121,20 @@ jobs:
           UPDATE_REPO: ${{ github.repository }}
         run: |
           APK=$(ls app/build/outputs/apk/release/*.apk | head -n1)
+
           unzip -p "$APK" 'classes*.dex' | grep -a -F -q -- "$UPDATE_REPO" \
             || { echo "::error::$APK does not contain the update repository $UPDATE_REPO"; exit 1; }
+
           echo "Update repository baked into $APK: $UPDATE_REPO"
 
       - name: Name the APK and write its checksum
         run: |
           APK=$(ls app/build/outputs/apk/release/*.apk | head -n1)
-          cp "$APK" "Flowly-${{ github.ref_name }}.apk"
-          sha256sum "Flowly-${{ github.ref_name }}.apk" > "Flowly-${{ github.ref_name }}.apk.sha256"
+
+          cp "$APK" "Flowly-${GITHUB_REF_NAME}.apk"
+
+          sha256sum "Flowly-${GITHUB_REF_NAME}.apk" \
+            > "Flowly-${GITHUB_REF_NAME}.apk.sha256"
 
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
