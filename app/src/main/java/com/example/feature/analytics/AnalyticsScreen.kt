@@ -1,12 +1,16 @@
 package com.example.feature.analytics
 
+import androidx.compose.animation.Crossfade
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -22,8 +26,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -34,65 +38,70 @@ import androidx.compose.material.icons.filled.PieChart
 import androidx.compose.material.icons.filled.Savings
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.DatePickerDialog
+import androidx.compose.material3.DateRangePicker
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.rememberDateRangePickerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableDoubleStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.Path
-import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.StrokeCap
-import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.example.core.ui.AppleSegmentedControl
 import com.example.core.ui.EmptyState
 import com.example.core.util.CurrencyFormatter
 import com.example.domain.model.InsightType
-import com.example.domain.model.MerchantSummary
 import com.example.domain.model.SpendingInsight
-import com.example.domain.model.TimeFilter
-import com.example.ui.theme.ExpenseRed
 import com.example.ui.theme.FlowlyMotion
 import com.example.ui.theme.IncomeGreen
 import com.example.ui.theme.LocalReduceMotion
 import com.example.ui.theme.SystemBlue
-import com.example.ui.theme.SystemGreen
-import com.example.ui.theme.SystemIndigo
-import com.example.ui.theme.SystemOrange
-import com.example.ui.theme.SystemPink
-import com.example.ui.theme.SystemTeal
 import com.example.ui.theme.TransferCyan
 import com.example.ui.theme.WarningAmber
 import com.example.ui.theme.asAmount
 import kotlin.math.abs
+import kotlin.math.atan2
+import kotlin.math.hypot
 import kotlin.math.roundToInt
 
 // =============================================================================
-// ANALYTICS — premium analytical page
+// ANALYTICS 2.0
 //
-// Typography: Manrope for the title, section headings and every financial
-// figure (via asAmount()); Inter for labels, captions and supporting text.
+// Typography: Manrope for the title, section headings and every financial figure
+// (via asAmount()); Inter for labels, captions and supporting text.
+// Colour is used only where it carries meaning: the accent for interaction,
+// green / amber for spending going down / up, everything else stays neutral.
 // =============================================================================
 
-private val CategoryPalette = listOf(SystemBlue, SystemIndigo, SystemTeal, SystemOrange, SystemPink, SystemGreen)
+private val OtherSliceColor = Color(0xFF9A9AA0)
+private val WeekdayShort = listOf("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
+private val WeekdayFull = listOf("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
 
 @Composable
 fun AnalyticsScreen(
@@ -102,13 +111,18 @@ fun AnalyticsScreen(
     modifier: Modifier = Modifier
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
-    val filters = listOf(
-        TimeFilter.THIS_WEEK to "Week",
-        TimeFilter.THIS_MONTH to "Month",
-        TimeFilter.LAST_MONTH to "Last Mo",
-        TimeFilter.ALL_TIME to "All Time"
-    )
+    var showRangePicker by remember { mutableStateOf(false) }
     val currency = state.defaultCurrency
+
+    if (showRangePicker) {
+        RangePickerDialog(
+            onDismiss = { showRangePicker = false },
+            onConfirm = { start, end ->
+                viewModel.onCustomRangeSelected(start, end)
+                showRangePicker = false
+            }
+        )
+    }
 
     LazyColumn(
         modifier = modifier
@@ -119,7 +133,7 @@ fun AnalyticsScreen(
         contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 16.dp, bottom = 128.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
-        // ---- Header ----------------------------------------------------------
+        // ---- Header + period chips ---------------------------------------------
         item {
             Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
                 Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
@@ -129,276 +143,189 @@ fun AnalyticsScreen(
                         color = MaterialTheme.colorScheme.onBackground
                     )
                     Text(
-                        "A clearer picture of your spending",
+                        text = state.rangeLabel.ifBlank { " " },
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
-                AppleSegmentedControl(
-                    options = filters.map { it.second },
-                    selectedIndex = filters.indexOfFirst { it.first == state.selectedTimeFilter }.coerceAtLeast(0),
-                    onSelect = { viewModel.onTimeFilterSelected(filters[it].first) },
-                    testTags = filters.map { "time_filter_${it.second.lowercase()}" }
-                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    listOf(
+                        AnalyticsPeriod.WEEK to "Week",
+                        AnalyticsPeriod.MONTH to "Month",
+                        AnalyticsPeriod.YEAR to "Year",
+                        AnalyticsPeriod.CUSTOM to "Custom"
+                    ).forEach { (period, label) ->
+                        PeriodChip(
+                            label = label,
+                            selected = state.period == period,
+                            onClick = {
+                                if (period == AnalyticsPeriod.CUSTOM) showRangePicker = true
+                                else viewModel.onPeriodSelected(period)
+                            },
+                            modifier = Modifier.weight(1f).testTag("time_filter_${label.lowercase()}")
+                        )
+                    }
+                }
             }
         }
 
-        // ---- Hero: total spent + interactive trend ---------------------------
-        item {
-            AnalyticsPanel(corner = 28.dp, padding = 22.dp) {
+        if (state.isLoading) {
+            items(3) { SkeletonCard() }
+        } else {
+            // ---- Hero: total spent, daily trend, key figures -------------------
+            item { HeroCard(state, currency) }
+
+            // ---- Income vs spending ----------------------------------------------
+            item { IncomeVsSpendingCard(state, currency) }
+
+            // ---- Where your money went -------------------------------------------
+            item { CategoryCard(state, currency) }
+
+            // ---- Weekday pattern ---------------------------------------------------
+            item { WeekdayCard(state) }
+
+            // ---- Insights ------------------------------------------------------------
+            item { InsightsCard(state.insights, onNavigateToInsights) }
+
+            // ---- Top merchants (follows the selected period) ------------------------
+            if (state.topMerchants.isNotEmpty()) {
+                item { MerchantsCard(state.topMerchants, currency, onNavigateToMerchant) }
+            }
+        }
+    }
+}
+
+// =============================================================================
+// Header pieces
+// =============================================================================
+
+@Composable
+private fun PeriodChip(label: String, selected: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier) {
+    val background by animateColorAsState(
+        targetValue = if (selected) MaterialTheme.colorScheme.onBackground else MaterialTheme.colorScheme.surfaceVariant,
+        animationSpec = FlowlyMotion.quick(),
+        label = "chipBackground"
+    )
+    val content by animateColorAsState(
+        targetValue = if (selected) MaterialTheme.colorScheme.background else MaterialTheme.colorScheme.onSurfaceVariant,
+        animationSpec = FlowlyMotion.quick(),
+        label = "chipContent"
+    )
+    Box(
+        modifier = modifier
+            .clip(RoundedCornerShape(50))
+            .background(background)
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                onClick = onClick
+            )
+            .padding(vertical = 9.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(label, style = MaterialTheme.typography.labelLarge, color = content, maxLines = 1)
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun RangePickerDialog(onDismiss: () -> Unit, onConfirm: (Long, Long) -> Unit) {
+    val pickerState = rememberDateRangePickerState()
+    DatePickerDialog(
+        onDismissRequest = onDismiss,
+        confirmButton = {
+            TextButton(
+                enabled = pickerState.selectedStartDateMillis != null,
+                onClick = {
+                    val start = pickerState.selectedStartDateMillis
+                    if (start != null) onConfirm(start, pickerState.selectedEndDateMillis ?: start)
+                }
+            ) { Text("Apply") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
+    ) {
+        DateRangePicker(
+            state = pickerState,
+            modifier = Modifier.height(520.dp),
+            showModeToggle = false
+        )
+    }
+}
+
+// =============================================================================
+// Hero
+// =============================================================================
+
+@Composable
+private fun HeroCard(state: AnalyticsUiState, currency: String) {
+    val animatedTotal = rememberCountUp(state.totalExpense)
+    AnalyticsCard(corner = 28.dp, padding = 22.dp) {
+        Text(
+            "Total spent",
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Spacer(Modifier.height(6.dp))
+        Text(
+            text = CurrencyFormatter.format(animatedTotal, currency),
+            style = MaterialTheme.typography.displayLarge,
+            color = MaterialTheme.colorScheme.onSurface,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
+        Spacer(Modifier.height(10.dp))
+        ChangePill(state.totalExpense, state.previousExpense, state.comparisonLabel)
+        Spacer(Modifier.height(22.dp))
+
+        if (state.trend.none { it.amount > 0.0 }) {
+            Box(Modifier.fillMaxWidth().height(150.dp), contentAlignment = Alignment.Center) {
                 Text(
-                    text = "TOTAL SPENT · ${periodTitle(state.selectedTimeFilter).uppercase()}",
-                    style = MaterialTheme.typography.labelSmall,
-                    letterSpacing = 1.2.sp,
+                    "No spending recorded in this period.",
+                    style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Spacer(Modifier.height(8.dp))
-                Text(
-                    text = CurrencyFormatter.format(state.totalExpense, currency),
-                    style = MaterialTheme.typography.displayLarge,
-                    color = MaterialTheme.colorScheme.onSurface,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-                Spacer(Modifier.height(10.dp))
-                ChangePill(
-                    current = state.totalExpense,
-                    previous = state.previousPeriodExpense,
-                    allTime = state.selectedTimeFilter == TimeFilter.ALL_TIME
-                )
-                Spacer(Modifier.height(22.dp))
-                if (state.spendingTrend.none { it > 0.0 }) {
-                    Box(
-                        Modifier.fillMaxWidth().height(150.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(
-                            "No spending recorded in this period.",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                } else {
-                    SpendingTrendChart(
-                        values = state.spendingTrend,
-                        labels = state.trendLabels,
-                        currency = currency
-                    )
-                }
-            }
-        }
-
-        // ---- Cash in vs cash out --------------------------------------------
-        item {
-            AnalyticsPanel {
-                PanelTitle("Income vs spending", "How much of what came in went out")
-                Spacer(Modifier.height(18.dp))
-                val maxValue = maxOf(state.totalIncome, state.totalExpense, 1.0)
-                FlowBar("Income", state.totalIncome, maxValue, currency, IncomeGreen)
-                Spacer(Modifier.height(14.dp))
-                FlowBar("Spending", state.totalExpense, maxValue, currency, MaterialTheme.colorScheme.primary)
-                if (state.totalIncome > 0.0) {
-                    Spacer(Modifier.height(16.dp))
-                    val spentShare = (state.totalExpense / state.totalIncome * 100).roundToInt()
-                    Text(
-                        text = "You spent $spentShare% of your income in this period.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-            }
-        }
-
-        // ---- Key figures -----------------------------------------------------
-        item {
-            val top = state.categoryBreakdown.firstOrNull()
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    StatTile(
-                        label = "DAILY AVERAGE",
-                        value = CurrencyFormatter.format(state.dailyAverage, currency),
-                        caption = "Per day, this period",
-                        modifier = Modifier.weight(1f)
-                    )
-                    StatTile(
-                        label = "TRANSACTIONS",
-                        value = state.transactionCount.toString(),
-                        caption = "Expenses recorded",
-                        modifier = Modifier.weight(1f)
-                    )
-                }
-                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    StatTile(
-                        label = "LARGEST EXPENSE",
-                        value = CurrencyFormatter.format(state.largestExpense, currency),
-                        caption = state.largestExpenseCategory ?: "—",
-                        modifier = Modifier.weight(1f)
-                    )
-                    StatTile(
-                        label = "TOP CATEGORY",
-                        value = top?.let { "${(it.percentage * 100).roundToInt()}%" } ?: "—",
-                        caption = top?.category?.name ?: "No spending yet",
-                        modifier = Modifier.weight(1f)
-                    )
-                }
-            }
-        }
-
-        // ---- Category donut ----------------------------------------------------
-        item {
-            AnalyticsPanel {
-                PanelTitle("Where your money went", "Share of spending by category")
-                Spacer(Modifier.height(20.dp))
-                if (state.categoryBreakdown.isEmpty()) {
-                    Text(
-                        "No expenses recorded in this period.",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                } else {
-                    val slices = buildSlices(state.categoryBreakdown, MaterialTheme.colorScheme.onSurfaceVariant)
-                    Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-                        CategoryDonut(
-                            slices = slices,
-                            centerAmount = CurrencyFormatter.format(state.totalExpense, currency),
-                            modifier = Modifier.size(188.dp)
-                        )
-                    }
-                    Spacer(Modifier.height(20.dp))
-                    slices.forEach { slice ->
-                        Row(
-                            Modifier.fillMaxWidth().padding(vertical = 9.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Box(Modifier.size(10.dp).clip(CircleShape).background(slice.color))
-                            Spacer(Modifier.width(12.dp))
-                            Text(
-                                slice.name,
-                                modifier = Modifier.weight(1f),
-                                style = MaterialTheme.typography.bodyMedium,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                            Text(
-                                "${(slice.fraction * 100).roundToInt()}%",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                            Spacer(Modifier.width(14.dp))
-                            Text(
-                                CurrencyFormatter.format(slice.amount, currency),
-                                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold).asAmount()
-                            )
-                        }
-                    }
-                }
-            }
-        }
-
-        // ---- Top merchants ---------------------------------------------------
-        if (state.topMerchants.isNotEmpty()) {
-            item { SectionTitle("Top merchants") }
-            item {
-                AnalyticsPanel(padding = 8.dp) {
-                    val maxSpent = state.topMerchants.maxOf { it.totalSpent }.coerceAtLeast(1.0)
-                    state.topMerchants.forEachIndexed { index, merchant ->
-                        MerchantRow(
-                            rank = index + 1,
-                            merchant = merchant,
-                            fraction = (merchant.totalSpent / maxSpent).toFloat(),
-                            currency = currency,
-                            onClick = { onNavigateToMerchant(merchant.name) }
-                        )
-                    }
-                }
-            }
-        }
-
-        // ---- Smart insights --------------------------------------------------
-        item { SectionTitle("Smart insights", actionTitle = "Deep Dive", onActionClick = onNavigateToInsights) }
-        if (state.insights.isEmpty()) {
-            item {
-                EmptyState(
-                    title = "Not enough data yet",
-                    subtitle = "Record transactions to unlock insights.",
-                    icon = Icons.Default.Insights
                 )
             }
         } else {
-            items(state.insights, key = { "insight_${it.title}_${it.type.name}" }) { insight ->
-                InsightCard(insight = insight)
-            }
+            TrendBars(points = state.trend, currency = currency)
         }
-    }
-}
 
-// =============================================================================
-// Building blocks
-// =============================================================================
-
-@Composable
-private fun AnalyticsPanel(
-    modifier: Modifier = Modifier,
-    corner: androidx.compose.ui.unit.Dp = 24.dp,
-    padding: androidx.compose.ui.unit.Dp = 20.dp,
-    content: @Composable ColumnScope.() -> Unit
-) {
-    Card(
-        modifier = modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(corner),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        border = BorderStroke(0.5.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.45f))
-    ) {
-        Column(Modifier.fillMaxWidth().padding(padding), content = content)
-    }
-}
-
-@Composable
-private fun PanelTitle(title: String, subtitle: String) {
-    Text(title, style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.onSurface)
-    Spacer(Modifier.height(2.dp))
-    Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-}
-
-@Composable
-private fun SectionTitle(
-    title: String,
-    actionTitle: String? = null,
-    onActionClick: () -> Unit = {}
-) {
-    Row(
-        Modifier.fillMaxWidth().padding(top = 8.dp),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Text(title, style = MaterialTheme.typography.headlineMedium, color = MaterialTheme.colorScheme.onBackground)
-        if (actionTitle != null) {
-            Text(
-                text = actionTitle,
-                style = MaterialTheme.typography.labelLarge,
-                color = MaterialTheme.colorScheme.primary,
-                modifier = Modifier
-                    .clip(RoundedCornerShape(10.dp))
-                    .clickable(onClick = onActionClick)
-                    .padding(horizontal = 8.dp, vertical = 6.dp)
-            )
+        Spacer(Modifier.height(18.dp))
+        HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.45f), thickness = 0.5.dp)
+        Spacer(Modifier.height(14.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            MiniStat("Daily average", CurrencyFormatter.format(state.dailyAverage, currency), Modifier.weight(1f))
+            MiniStat("Transactions", state.transactionCount.toString(), Modifier.weight(1f))
+            MiniStat("Largest", CurrencyFormatter.format(state.largestExpense, currency), Modifier.weight(1f))
         }
     }
 }
 
 @Composable
-private fun ChangePill(current: Double, previous: Double, allTime: Boolean) {
-    if (allTime) {
+private fun MiniStat(label: String, value: String, modifier: Modifier = Modifier) {
+    Column(modifier) {
         Text(
-            "Across all recorded transactions",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
+            label,
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
         )
-        return
+        Spacer(Modifier.height(4.dp))
+        Text(
+            value,
+            style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold).asAmount(),
+            color = MaterialTheme.colorScheme.onSurface,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
     }
+}
+
+@Composable
+private fun ChangePill(current: Double, previous: Double, comparisonLabel: String) {
     if (previous <= 0.0) {
         Text(
-            "No previous-period comparison yet",
+            "No earlier data to compare",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
@@ -417,7 +344,7 @@ private fun ChangePill(current: Double, previous: Double, allTime: Boolean) {
             verticalAlignment = Alignment.CenterVertically
         ) {
             Icon(
-                imageVector = if (change <= 0) Icons.AutoMirrored.Filled.TrendingDown else Icons.AutoMirrored.Filled.TrendingUp,
+                imageVector = if (good) Icons.AutoMirrored.Filled.TrendingDown else Icons.AutoMirrored.Filled.TrendingUp,
                 contentDescription = null,
                 tint = tint,
                 modifier = Modifier.size(15.dp)
@@ -431,10 +358,143 @@ private fun ChangePill(current: Double, previous: Double, allTime: Boolean) {
         }
         Spacer(Modifier.width(10.dp))
         Text(
-            text = if (good) "lower than previous period" else "higher than previous period",
+            text = "vs $comparisonLabel",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
+    }
+}
+
+/** Counts smoothly from the figure on screen to the new one. Instant when motion is reduced. */
+@Composable
+private fun rememberCountUp(target: Double): Double {
+    val reduce = LocalReduceMotion.current
+    var from by remember { mutableDoubleStateOf(target) }
+    var to by remember { mutableDoubleStateOf(target) }
+    val progress = remember { Animatable(1f) }
+    LaunchedEffect(target, reduce) {
+        if (reduce || target == to) {
+            from = target
+            to = target
+            progress.snapTo(1f)
+        } else {
+            from = from + (to - from) * progress.value
+            to = target
+            progress.snapTo(0f)
+            progress.animateTo(1f, FlowlyMotion.page())
+        }
+    }
+    return from + (to - from) * progress.value
+}
+
+// =============================================================================
+// Trend bars — one bar per day / week / month, tap or drag to read a value
+// =============================================================================
+
+@Composable
+private fun TrendBars(points: List<TrendPoint>, currency: String, modifier: Modifier = Modifier) {
+    if (points.isEmpty()) return
+    val barColor = MaterialTheme.colorScheme.primary
+    val reveal = rememberRevealProgress(points)
+    var selected by remember(points) { mutableStateOf<Int?>(null) }
+    val peak = remember(points) { points.indices.maxByOrNull { points[it].amount } ?: 0 }
+    val shown = (selected ?: peak).coerceIn(0, points.lastIndex)
+
+    Column(modifier) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                text = (if (selected == null) "Peak · " else "Selected · ") + points[shown].label,
+                modifier = Modifier.weight(1f),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Text(
+                text = CurrencyFormatter.format(points[shown].amount, currency),
+                style = MaterialTheme.typography.titleMedium.asAmount(),
+                color = MaterialTheme.colorScheme.onSurface
+            )
+        }
+        Spacer(Modifier.height(10.dp))
+
+        Canvas(
+            Modifier
+                .fillMaxWidth()
+                .height(120.dp)
+                .pointerInput(points) {
+                    detectTapGestures { offset ->
+                        val index = barIndexAt(offset.x, size.width.toFloat(), points.size)
+                        selected = if (selected == index) null else index
+                    }
+                }
+                .pointerInput(points) {
+                    detectHorizontalDragGestures(
+                        onDragStart = { offset -> selected = barIndexAt(offset.x, size.width.toFloat(), points.size) },
+                        onHorizontalDrag = { change, _ -> selected = barIndexAt(change.position.x, size.width.toFloat(), points.size) }
+                    )
+                }
+        ) {
+            val count = points.size
+            val slot = size.width / count
+            val barWidth = (slot * 0.6f).coerceAtLeast(2.dp.toPx()).coerceAtMost(slot)
+            val maxValue = points.maxOf { it.amount }.coerceAtLeast(1.0)
+            val minHeight = 3.dp.toPx()
+            val corner = minOf(4.dp.toPx(), barWidth / 2f)
+            points.forEachIndexed { index, point ->
+                val height = minHeight + (point.amount / maxValue).toFloat() * (size.height - minHeight) * reveal
+                drawRoundRect(
+                    color = barColor.copy(alpha = if (index == shown) 1f else 0.28f),
+                    topLeft = Offset(index * slot + (slot - barWidth) / 2f, size.height - height),
+                    size = Size(barWidth, height),
+                    cornerRadius = CornerRadius(corner, corner)
+                )
+            }
+        }
+
+        Spacer(Modifier.height(8.dp))
+        val labelIndexes = listOfNotNull(
+            0,
+            if (points.size >= 3) points.size / 2 else null,
+            if (points.size >= 2) points.lastIndex else null
+        )
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            labelIndexes.forEach {
+                Text(
+                    points[it].label,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+    }
+}
+
+private fun barIndexAt(x: Float, width: Float, count: Int): Int {
+    if (count <= 1 || width <= 0f) return 0
+    return ((x / width) * count).toInt().coerceIn(0, count - 1)
+}
+
+// =============================================================================
+// Income vs spending
+// =============================================================================
+
+@Composable
+private fun IncomeVsSpendingCard(state: AnalyticsUiState, currency: String) {
+    AnalyticsCard {
+        PanelTitle("Income vs spending", "How much of what came in went out")
+        Spacer(Modifier.height(18.dp))
+        val maxValue = maxOf(state.totalIncome, state.totalExpense, 1.0)
+        FlowBar("Income", state.totalIncome, maxValue, currency, IncomeGreen)
+        Spacer(Modifier.height(14.dp))
+        FlowBar("Spending", state.totalExpense, maxValue, currency, MaterialTheme.colorScheme.primary)
+        if (state.totalIncome > 0.0) {
+            Spacer(Modifier.height(16.dp))
+            val spentShare = (state.totalExpense / state.totalIncome * 100).roundToInt()
+            Text(
+                text = "You spent $spentShare% of your income in this period.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
     }
 }
 
@@ -474,64 +534,436 @@ private fun FlowBar(label: String, value: Double, maxValue: Double, currency: St
     }
 }
 
+// =============================================================================
+// Where your money went — thin ring, rounded ends, tap to focus
+// =============================================================================
+
+private data class DonutSlice(
+    val name: String,
+    val amount: Double,
+    val fraction: Float,
+    val color: Color,
+    val previousAmount: Double
+) {
+    val changePercent: Double?
+        get() = if (previousAmount > 0.0) (amount - previousAmount) / previousAmount * 100.0 else null
+}
+
+/** A calm palette built from the app accent: darker and lighter tints of it, with neutral grey for "Other". */
 @Composable
-private fun StatTile(label: String, value: String, caption: String, modifier: Modifier = Modifier) {
-    Card(
-        modifier = modifier,
-        shape = RoundedCornerShape(22.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        border = BorderStroke(0.5.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.45f))
-    ) {
-        Column(Modifier.fillMaxWidth().padding(16.dp)) {
+private fun donutPalette(): List<Color> {
+    val accent = MaterialTheme.colorScheme.primary
+    return listOf(
+        lerp(accent, Color.Black, 0.30f),
+        accent,
+        lerp(accent, Color.White, 0.30f),
+        lerp(accent, Color.White, 0.52f),
+        lerp(accent, Color.White, 0.68f)
+    )
+}
+
+private fun buildSlices(items: List<CategorySpend>, palette: List<Color>): List<DonutSlice> {
+    val top = items.take(5).mapIndexed { index, item ->
+        DonutSlice(item.name, item.amount, item.share, palette[index % palette.size], item.previousAmount)
+    }
+    val rest = items.drop(5)
+    if (rest.isEmpty()) return top
+    return top + DonutSlice(
+        name = "Other",
+        amount = rest.sumOf { it.amount },
+        fraction = rest.sumOf { it.share.toDouble() }.toFloat(),
+        color = OtherSliceColor,
+        previousAmount = rest.sumOf { it.previousAmount }
+    )
+}
+
+@Composable
+private fun CategoryCard(state: AnalyticsUiState, currency: String) {
+    AnalyticsCard {
+        PanelTitle("Where your money went", "Tap a slice or a row to focus")
+        Spacer(Modifier.height(18.dp))
+        if (state.categories.isEmpty()) {
             Text(
-                label,
-                style = MaterialTheme.typography.labelSmall,
-                letterSpacing = 1.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1
+                "No expenses recorded in this period.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
             )
-            Spacer(Modifier.height(10.dp))
-            Text(
-                value,
-                style = MaterialTheme.typography.titleLarge.copy(fontSize = 22.sp).asAmount(),
-                color = MaterialTheme.colorScheme.onSurface,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
+            return@AnalyticsCard
+        }
+        val palette = donutPalette()
+        val slices = remember(state.categories, palette) { buildSlices(state.categories, palette) }
+        var selectedSlice by remember(slices) { mutableStateOf<Int?>(null) }
+
+        Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+            CategoryDonut(
+                slices = slices,
+                selected = selectedSlice,
+                onTap = { hit -> selectedSlice = if (hit == selectedSlice) null else hit },
+                totalAmount = CurrencyFormatter.format(state.totalExpense, currency),
+                currency = currency,
+                modifier = Modifier.size(196.dp)
             )
-            Spacer(Modifier.height(4.dp))
-            Text(
-                caption,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
+        }
+        Spacer(Modifier.height(12.dp))
+        slices.forEachIndexed { index, slice ->
+            if (index > 0) {
+                HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.45f), thickness = 0.5.dp)
+            }
+            LegendRow(
+                slice = slice,
+                dimmed = selectedSlice != null && selectedSlice != index,
+                currency = currency,
+                onClick = { selectedSlice = if (selectedSlice == index) null else index }
             )
         }
     }
 }
 
 @Composable
-private fun MerchantRow(
-    rank: Int,
-    merchant: MerchantSummary,
-    fraction: Float,
+private fun CategoryDonut(
+    slices: List<DonutSlice>,
+    selected: Int?,
+    onTap: (Int?) -> Unit,
+    totalAmount: String,
     currency: String,
-    onClick: () -> Unit
+    modifier: Modifier = Modifier
 ) {
+    val reveal = rememberRevealProgress(slices)
+    val dim by animateFloatAsState(
+        targetValue = if (selected == null) 1f else 0.22f,
+        animationSpec = FlowlyMotion.quick(),
+        label = "donutDim"
+    )
+    val track = MaterialTheme.colorScheme.surfaceVariant
+
+    Box(modifier, contentAlignment = Alignment.Center) {
+        Canvas(
+            Modifier
+                .fillMaxSize()
+                .pointerInput(slices) {
+                    detectTapGestures { offset ->
+                        onTap(hitSlice(offset, Size(size.width.toFloat(), size.height.toFloat()), slices))
+                    }
+                }
+        ) {
+            val strokeWidth = 14.dp.toPx()
+            val diameter = size.minDimension - strokeWidth
+            val topLeft = Offset((size.width - diameter) / 2f, (size.height - diameter) / 2f)
+            val arcSize = Size(diameter, diameter)
+            val radius = diameter / 2f
+            drawArc(track, 0f, 360f, useCenter = false, topLeft = topLeft, size = arcSize, style = Stroke(strokeWidth))
+
+            // Rounded caps reach half a stroke past each end, so the arc-length gap is stroke width + 5dp.
+            val gapDegrees = if (slices.size > 1) {
+                Math.toDegrees(((strokeWidth + 5.dp.toPx()) / radius).toDouble()).toFloat()
+            } else 0f
+            var start = -90f
+            slices.forEachIndexed { index, slice ->
+                val full = 360f * slice.fraction * reveal
+                val sweep = if (reveal >= 1f) (full - gapDegrees).coerceAtLeast(0.1f) else full - gapDegrees
+                if (sweep > 0f) {
+                    drawArc(
+                        color = slice.color.copy(alpha = if (selected == null || selected == index) 1f else dim),
+                        startAngle = start + gapDegrees / 2f,
+                        sweepAngle = sweep,
+                        useCenter = false,
+                        topLeft = topLeft,
+                        size = arcSize,
+                        style = Stroke(strokeWidth, cap = StrokeCap.Round)
+                    )
+                }
+                start += full
+            }
+        }
+
+        Crossfade(targetState = selected, animationSpec = FlowlyMotion.quick(), label = "donutCenter") { index ->
+            val slice = index?.let { slices.getOrNull(it) }
+            Column(
+                modifier = Modifier.padding(horizontal = 34.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Text(
+                    text = slice?.name ?: "Spent",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    textAlign = TextAlign.Center
+                )
+                Text(
+                    text = if (slice != null) CurrencyFormatter.format(slice.amount, currency) else totalAmount,
+                    style = MaterialTheme.typography.titleLarge.copy(fontSize = 22.sp).asAmount(),
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1
+                )
+                Text(
+                    text = if (slice != null) {
+                        "${(slice.fraction * 100).roundToInt()}% of spending"
+                    } else if (slices.size == 1) "1 category" else "${slices.size} categories",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1
+                )
+            }
+        }
+    }
+}
+
+/** Which slice a tap landed on; null when the tap was in the middle or outside the ring. */
+private fun hitSlice(offset: Offset, size: Size, slices: List<DonutSlice>): Int? {
+    val dx = offset.x - size.width / 2f
+    val dy = offset.y - size.height / 2f
+    val distance = hypot(dx, dy)
+    val outer = size.minDimension / 2f
+    if (distance < outer * 0.5f || distance > outer * 1.05f) return null
+    var degrees = Math.toDegrees(atan2(dy.toDouble(), dx.toDouble())).toFloat() + 90f
+    if (degrees < 0f) degrees += 360f
+    val position = degrees / 360f
+    var covered = 0f
+    slices.forEachIndexed { index, slice ->
+        covered += slice.fraction
+        if (position <= covered) return index
+    }
+    return slices.lastIndex
+}
+
+@Composable
+private fun LegendRow(slice: DonutSlice, dimmed: Boolean, currency: String, onClick: () -> Unit) {
+    val rowAlpha by animateFloatAsState(
+        targetValue = if (dimmed) 0.4f else 1f,
+        animationSpec = FlowlyMotion.quick(),
+        label = "legendAlpha"
+    )
+    val rounded = slice.changePercent?.roundToInt()
+    val changeText = when {
+        rounded == null || rounded == 0 -> "—"
+        rounded > 0 -> "+$rounded%"
+        else -> "−${abs(rounded)}%"
+    }
+    val changeColor = when {
+        rounded == null || rounded == 0 -> MaterialTheme.colorScheme.onSurfaceVariant
+        rounded < 0 -> IncomeGreen
+        else -> WarningAmber
+    }
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .alpha(rowAlpha)
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                onClick = onClick
+            )
+            .padding(vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(Modifier.size(8.dp).clip(CircleShape).background(slice.color))
+        Spacer(Modifier.width(12.dp))
+        Text(
+            slice.name,
+            modifier = Modifier.weight(1f),
+            style = MaterialTheme.typography.bodyMedium,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
+        Text(
+            changeText,
+            modifier = Modifier.widthIn(min = 44.dp),
+            style = MaterialTheme.typography.labelMedium,
+            color = changeColor,
+            textAlign = TextAlign.End
+        )
+        Spacer(Modifier.width(8.dp))
+        Text(
+            CurrencyFormatter.format(slice.amount, currency),
+            modifier = Modifier.widthIn(min = 76.dp),
+            style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold).asAmount(),
+            textAlign = TextAlign.End
+        )
+    }
+}
+
+// =============================================================================
+// Weekday pattern
+// =============================================================================
+
+@Composable
+private fun WeekdayCard(state: AnalyticsUiState) {
+    val values = state.weekdayAverages
+    val maxValue = values.maxOrNull() ?: 0.0
+    val peak = if (maxValue > 0.0) values.indexOf(maxValue) else -1
+    val reveal = rememberRevealProgress(values)
+    val accent = MaterialTheme.colorScheme.primary
+
+    AnalyticsCard {
+        PanelTitle(
+            "Weekday pattern",
+            if (peak >= 0) "${WeekdayFull[peak]} is your biggest spending day" else "No spending recorded in this period."
+        )
+        Spacer(Modifier.height(18.dp))
+        Row(
+            Modifier.fillMaxWidth().height(92.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            verticalAlignment = Alignment.Bottom
+        ) {
+            values.forEachIndexed { index, value ->
+                val fraction = if (maxValue > 0.0) (value / maxValue).toFloat() else 0f
+                Column(
+                    Modifier.weight(1f).fillMaxHeight(),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Bottom
+                ) {
+                    Box(
+                        Modifier
+                            .fillMaxWidth()
+                            .height(4.dp + 58.dp * (fraction * reveal))
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(accent.copy(alpha = if (index == peak) 1f else 0.28f))
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        WeekdayShort[index],
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1
+                    )
+                }
+            }
+        }
+    }
+}
+
+// =============================================================================
+// Insights
+// =============================================================================
+
+@Composable
+private fun InsightsCard(insights: List<SpendingInsight>, onDeepDive: () -> Unit) {
+    AnalyticsCard {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                "Insights",
+                modifier = Modifier.weight(1f),
+                style = MaterialTheme.typography.titleLarge,
+                color = MaterialTheme.colorScheme.onSurface
+            )
+            Text(
+                text = "Deep dive",
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(10.dp))
+                    .clickable(onClick = onDeepDive)
+                    .padding(horizontal = 8.dp, vertical = 6.dp)
+            )
+        }
+        Spacer(Modifier.height(6.dp))
+        if (insights.isEmpty()) {
+            EmptyState(
+                title = "Not enough data yet",
+                subtitle = "Record a few transactions to see insights.",
+                icon = Icons.Default.Insights
+            )
+        } else {
+            insights.forEachIndexed { index, insight ->
+                if (index > 0) {
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.45f), thickness = 0.5.dp)
+                }
+                InsightRow(insight)
+            }
+        }
+    }
+}
+
+@Composable
+private fun InsightRow(insight: SpendingInsight) {
+    val tint = when (insight.type) {
+        InsightType.POSITIVE -> IncomeGreen
+        InsightType.WARNING -> WarningAmber
+        InsightType.INFO -> SystemBlue
+        InsightType.TREND -> TransferCyan
+    }
+    val icon = when (insight.iconName) {
+        "TrendingDown" -> Icons.AutoMirrored.Filled.TrendingDown
+        "TrendingUp" -> Icons.AutoMirrored.Filled.TrendingUp
+        "Savings" -> Icons.Default.Savings
+        "PieChart" -> Icons.Default.PieChart
+        else -> Icons.Default.Insights
+    }
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .padding(vertical = 12.dp)
+            .testTag("insight_card_${insight.title.lowercase().replace(" ", "_")}"),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
+            Modifier.size(38.dp).clip(RoundedCornerShape(12.dp)).background(tint.copy(alpha = 0.14f)),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(19.dp))
+        }
+        Spacer(Modifier.width(12.dp))
+        Column(Modifier.weight(1f)) {
+            Text(
+                insight.title,
+                style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold),
+                color = MaterialTheme.colorScheme.onSurface
+            )
+            Spacer(Modifier.height(2.dp))
+            Text(
+                insight.description,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
+}
+
+// =============================================================================
+// Top merchants
+// =============================================================================
+
+@Composable
+private fun MerchantsCard(merchants: List<MerchantSpend>, currency: String, onMerchantClick: (String) -> Unit) {
+    AnalyticsCard {
+        PanelTitle("Top merchants", "Where you spent most in this period")
+        Spacer(Modifier.height(8.dp))
+        val maxSpent = merchants.maxOf { it.total }.coerceAtLeast(1.0)
+        merchants.forEachIndexed { index, merchant ->
+            if (index > 0) {
+                HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.45f), thickness = 0.5.dp)
+            }
+            MerchantRow(
+                rank = index + 1,
+                merchant = merchant,
+                fraction = (merchant.total / maxSpent).toFloat(),
+                currency = currency,
+                onClick = { onMerchantClick(merchant.name) }
+            )
+        }
+    }
+}
+
+@Composable
+private fun MerchantRow(rank: Int, merchant: MerchantSpend, fraction: Float, currency: String, onClick: () -> Unit) {
     val reveal = rememberRevealProgress(fraction)
     Column(
         Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(18.dp))
-            .clickable(onClick = onClick)
-            .padding(horizontal = 12.dp, vertical = 12.dp)
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                onClick = onClick
+            )
+            .padding(vertical = 12.dp)
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
-                text = rank.toString(),
+                rank.toString(),
+                modifier = Modifier.width(22.dp),
                 style = MaterialTheme.typography.labelMedium.asAmount(),
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.width(22.dp)
+                color = MaterialTheme.colorScheme.onSurfaceVariant
             )
             Column(Modifier.weight(1f)) {
                 Text(
@@ -541,13 +973,13 @@ private fun MerchantRow(
                     overflow = TextOverflow.Ellipsis
                 )
                 Text(
-                    "${merchant.transactionCount} transactions",
+                    if (merchant.count == 1) "1 transaction" else "${merchant.count} transactions",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
             Text(
-                CurrencyFormatter.format(merchant.totalSpent, currency),
+                CurrencyFormatter.format(merchant.total, currency),
                 style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold).asAmount()
             )
         }
@@ -572,211 +1004,42 @@ private fun MerchantRow(
 }
 
 // =============================================================================
-// Trend chart — smooth area line, drag or press to read a value
+// Shared building blocks
 // =============================================================================
 
 @Composable
-private fun SpendingTrendChart(
-    values: List<Double>,
-    labels: List<String>,
-    currency: String,
-    modifier: Modifier = Modifier
+private fun AnalyticsCard(
+    modifier: Modifier = Modifier,
+    corner: Dp = 24.dp,
+    padding: Dp = 20.dp,
+    content: @Composable ColumnScope.() -> Unit
 ) {
-    val lineColor = MaterialTheme.colorScheme.primary
-    val gridColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.16f)
-    val reveal = rememberRevealProgress(values)
-    var selected by remember(values) { mutableStateOf<Int?>(null) }
-    val peakIndex = remember(values) { values.indices.maxByOrNull { values[it] } ?: 0 }
-    val shownIndex = selected ?: peakIndex
-    val shownLabel = labels.getOrNull(shownIndex).orEmpty()
-
-    Column(modifier) {
-        // Read-out
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) {
-                Text(
-                    text = if (selected == null) "PEAK" else "SELECTED",
-                    style = MaterialTheme.typography.labelSmall,
-                    letterSpacing = 1.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Text(
-                    text = shownLabel,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-            Text(
-                text = CurrencyFormatter.format(values.getOrElse(shownIndex) { 0.0 }, currency),
-                style = MaterialTheme.typography.titleLarge.asAmount(),
-                color = MaterialTheme.colorScheme.onSurface
-            )
-        }
-        Spacer(Modifier.height(12.dp))
-
-        Canvas(
-            Modifier
-                .fillMaxWidth()
-                .height(150.dp)
-                .pointerInput(values) {
-                    detectTapGestures(
-                        onPress = { offset ->
-                            selected = indexAt(offset.x, size.width.toFloat(), values.size)
-                            tryAwaitRelease()
-                            selected = null
-                        }
-                    )
-                }
-                .pointerInput(values) {
-                    detectHorizontalDragGestures(
-                        onDragStart = { offset -> selected = indexAt(offset.x, size.width.toFloat(), values.size) },
-                        onHorizontalDrag = { change, _ -> selected = indexAt(change.position.x, size.width.toFloat(), values.size) },
-                        onDragEnd = { selected = null },
-                        onDragCancel = { selected = null }
-                    )
-                }
-        ) {
-            val pad = 10.dp.toPx()
-            val maxValue = (values.maxOrNull() ?: 0.0).coerceAtLeast(1.0)
-            val dash = PathEffect.dashPathEffect(floatArrayOf(4.dp.toPx(), 5.dp.toPx()))
-
-            for (i in 0..3) {
-                val y = pad + (size.height - 2 * pad) * i / 3f
-                drawLine(gridColor, Offset(0f, y), Offset(size.width, y), strokeWidth = 1.dp.toPx(), pathEffect = dash)
-            }
-            if (values.size < 2) return@Canvas
-
-            val points = values.mapIndexed { index, value ->
-                val x = size.width * index / (values.size - 1)
-                val y = size.height - pad - (value / maxValue).toFloat() * reveal * (size.height - 2 * pad)
-                Offset(x, y)
-            }
-            val line = smoothPath(points)
-            val area = smoothPath(points).apply {
-                lineTo(points.last().x, size.height)
-                lineTo(points.first().x, size.height)
-                close()
-            }
-            drawPath(
-                area,
-                Brush.verticalGradient(
-                    listOf(lineColor.copy(alpha = 0.30f), lineColor.copy(alpha = 0f)),
-                    startY = 0f,
-                    endY = size.height
-                )
-            )
-            drawPath(line, lineColor, style = Stroke(width = 3.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round))
-
-            val focus = points[shownIndex.coerceIn(points.indices)]
-            if (selected != null) {
-                drawLine(lineColor.copy(alpha = 0.35f), Offset(focus.x, 0f), Offset(focus.x, size.height), strokeWidth = 1.dp.toPx())
-            }
-            drawCircle(lineColor.copy(alpha = 0.18f), radius = 11.dp.toPx(), center = focus)
-            drawCircle(Color.White, radius = 6.dp.toPx(), center = focus)
-            drawCircle(lineColor, radius = 4.dp.toPx(), center = focus)
-        }
-
-        Spacer(Modifier.height(10.dp))
-        if (labels.size >= 3) {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                listOf(labels.first(), labels[labels.size / 2], labels.last()).forEach {
-                    Text(it, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-            }
-        }
+    Card(
+        modifier = modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(corner),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        border = BorderStroke(0.5.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.45f))
+    ) {
+        Column(Modifier.fillMaxWidth().padding(padding), content = content)
     }
-}
-
-private fun indexAt(x: Float, width: Float, count: Int): Int {
-    if (count <= 1 || width <= 0f) return 0
-    return ((x / width) * (count - 1)).roundToInt().coerceIn(0, count - 1)
-}
-
-/** Smooth cubic curve through [points] using horizontal tangents (never overshoots). */
-private fun smoothPath(points: List<Offset>): Path {
-    val path = Path()
-    if (points.isEmpty()) return path
-    path.moveTo(points[0].x, points[0].y)
-    for (i in 1 until points.size) {
-        val prev = points[i - 1]
-        val cur = points[i]
-        val midX = (prev.x + cur.x) / 2f
-        path.cubicTo(midX, prev.y, midX, cur.y, cur.x, cur.y)
-    }
-    return path
-}
-
-// =============================================================================
-// Category donut
-// =============================================================================
-
-private data class DonutSlice(val name: String, val amount: Double, val fraction: Float, val color: Color)
-
-private fun buildSlices(items: List<CategorySpendItem>, otherColor: Color): List<DonutSlice> {
-    val top = items.take(5).mapIndexed { index, item ->
-        DonutSlice(item.category?.name ?: "Other", item.amount, item.percentage, categoryColor(item.colorHex, index))
-    }
-    val rest = items.drop(5)
-    if (rest.isEmpty()) return top
-    return top + DonutSlice("Other", rest.sumOf { it.amount }, rest.sumOf { it.percentage.toDouble() }.toFloat(), otherColor)
 }
 
 @Composable
-private fun CategoryDonut(slices: List<DonutSlice>, centerAmount: String, modifier: Modifier = Modifier) {
-    val reveal = rememberRevealProgress(slices)
-    val track = MaterialTheme.colorScheme.surfaceVariant
-    Box(modifier, contentAlignment = Alignment.Center) {
-        Canvas(Modifier.fillMaxSize()) {
-            val strokeWidth = 22.dp.toPx()
-            val inset = strokeWidth / 2f
-            val arcSize = Size(size.width - strokeWidth, size.height - strokeWidth)
-            val topLeft = Offset(inset, inset)
-            drawArc(track, 0f, 360f, useCenter = false, topLeft = topLeft, size = arcSize, style = Stroke(strokeWidth))
-
-            val gap = if (slices.size > 1) 3f else 0f
-            var start = -90f
-            slices.forEach { slice ->
-                val sweep = (360f * slice.fraction * reveal - gap).coerceAtLeast(0.5f)
-                drawArc(
-                    color = slice.color,
-                    startAngle = start + gap / 2f,
-                    sweepAngle = sweep,
-                    useCenter = false,
-                    topLeft = topLeft,
-                    size = arcSize,
-                    style = Stroke(strokeWidth, cap = StrokeCap.Butt)
-                )
-                start += 360f * slice.fraction * reveal
-            }
-        }
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Text(
-                "SPENT",
-                style = MaterialTheme.typography.labelSmall,
-                letterSpacing = 1.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            Text(
-                centerAmount,
-                style = MaterialTheme.typography.titleLarge.copy(fontSize = 20.sp).asAmount(),
-                color = MaterialTheme.colorScheme.onSurface,
-                maxLines = 1
-            )
-        }
-    }
+private fun PanelTitle(title: String, subtitle: String) {
+    Text(title, style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.onSurface)
+    Spacer(Modifier.height(2.dp))
+    Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
 }
 
-private fun categoryColor(hex: String, index: Int): Color = try {
-    Color(android.graphics.Color.parseColor(hex))
-} catch (_: IllegalArgumentException) {
-    CategoryPalette[index % CategoryPalette.size]
-}
-
-private fun periodTitle(filter: TimeFilter): String = when (filter) {
-    TimeFilter.THIS_WEEK -> "This week"
-    TimeFilter.THIS_MONTH -> "This month"
-    TimeFilter.LAST_MONTH -> "Last month"
-    TimeFilter.ALL_TIME -> "All time"
+@Composable
+private fun SkeletonCard() {
+    Box(
+        Modifier
+            .fillMaxWidth()
+            .height(180.dp)
+            .clip(RoundedCornerShape(24.dp))
+            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+    )
 }
 
 /** 0 → 1 reveal animation, restarted whenever [key] changes. Instant when motion is reduced. */
@@ -793,64 +1056,4 @@ private fun rememberRevealProgress(key: Any?): Float {
         }
     }
     return progress.value
-}
-
-// =============================================================================
-// Insight card
-// =============================================================================
-
-@Composable
-fun InsightCard(
-    insight: SpendingInsight,
-    modifier: Modifier = Modifier
-) {
-    val (iconBg, iconTint) = when (insight.type) {
-        InsightType.POSITIVE -> Pair(IncomeGreen.copy(alpha = 0.14f), IncomeGreen)
-        InsightType.WARNING -> Pair(WarningAmber.copy(alpha = 0.14f), WarningAmber)
-        InsightType.INFO -> Pair(SystemBlue.copy(alpha = 0.14f), SystemBlue)
-        InsightType.TREND -> Pair(TransferCyan.copy(alpha = 0.14f), TransferCyan)
-    }
-
-    val iconVector = when (insight.iconName) {
-        "TrendingDown" -> Icons.AutoMirrored.Filled.TrendingDown
-        "TrendingUp" -> Icons.AutoMirrored.Filled.TrendingUp
-        "Savings" -> Icons.Default.Savings
-        "PieChart" -> Icons.Default.PieChart
-        else -> Icons.Default.Insights
-    }
-
-    Card(
-        modifier = modifier
-            .fillMaxWidth()
-            .testTag("insight_card_${insight.title.lowercase().replace(" ", "_")}"),
-        shape = RoundedCornerShape(20.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        border = BorderStroke(0.5.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.45f))
-    ) {
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(14.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Box(
-                modifier = Modifier.size(42.dp).clip(RoundedCornerShape(14.dp)).background(iconBg),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(imageVector = iconVector, contentDescription = null, tint = iconTint, modifier = Modifier.size(20.dp))
-            }
-            Spacer(modifier = Modifier.width(12.dp))
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = insight.title,
-                    style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold, fontSize = 14.5.sp),
-                    color = MaterialTheme.colorScheme.onSurface
-                )
-                Spacer(modifier = Modifier.height(2.dp))
-                Text(
-                    text = insight.description,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-        }
-    }
 }
