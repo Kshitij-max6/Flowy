@@ -1,0 +1,143 @@
+name: Release preflight
+
+# Runs every release check WITHOUT building or publishing anything. Two uses:
+#   1. Manually, any time:  Actions > "Release preflight" > Run workflow   (a free dress rehearsal)
+#   2. Automatically, as the first job of "Release Flowly APK" (so a problem stops the release in minutes,
+#      before any build time is spent).
+# The checks themselves live in .github/release/*.sh (tested by "Release scripts self-test").
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: 'Which part of the version to increase (ignored if you type a version below)'
+        type: choice
+        options: [patch, minor, major]
+        default: patch
+      version:
+        description: 'Optional exact version, e.g. 1.4.0 (leave empty to use the bump above)'
+        type: string
+        default: ''
+  workflow_call:
+    inputs:
+      bump:
+        type: string
+        default: patch
+      version:
+        type: string
+        default: ''
+    outputs:
+      tag:
+        value: ${{ jobs.preflight.outputs.tag }}
+      name:
+        value: ${{ jobs.preflight.outputs.name }}
+      code:
+        value: ${{ jobs.preflight.outputs.code }}
+      cert:
+        value: ${{ jobs.preflight.outputs.cert }}
+
+permissions:
+  contents: write
+
+env:
+  APP_ID: com.kshitij.flowly
+  KEY_ALIAS: upload
+  BUILD_TOOLS: 36.0.0
+
+jobs:
+  preflight:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    outputs:
+      tag: ${{ steps.plan.outputs.tag }}
+      name: ${{ steps.plan.outputs.name }}
+      code: ${{ steps.plan.outputs.code }}
+      cert: ${{ steps.sign.outputs.cert }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 1. Version and tag
+        id: plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          TAG: ${{ github.ref_name }}
+          BUMP: ${{ inputs.bump }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          git fetch --tags --force --quiet
+          EXISTING_TAGS="$( { git tag --list; gh release list --repo "$GITHUB_REPOSITORY" --limit 200 --json tagName -q '.[].tagName'; } | sort -u )"
+          export EXISTING_TAGS
+          bash .github/release/plan-version.sh
+
+      - name: 2. Repository configuration
+        env:
+          REPO: ${{ github.repository }}
+        run: bash .github/release/check-static.sh
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: 3. Signing secrets and permanent key
+        id: sign
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          EXPECTED_CERT_SHA256: ${{ vars.EXPECTED_CERT_SHA256 }}
+        run: bash .github/release/check-signing.sh
+
+      - name: 4. GitHub (public repo, branch, unused tag, permissions)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ steps.plan.outputs.tag }}
+          EVENT: ${{ github.event_name }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          REF_NAME: ${{ github.ref_name }}
+          RUN_ID: ${{ github.run_id }}
+        run: bash .github/release/check-github.sh
+
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: ''
+
+      - name: Install build tools (to read the previous release)
+        run: |
+          sdkmanager --install "build-tools;${BUILD_TOOLS}"
+          yes | sdkmanager --licenses >/dev/null || true
+
+      - name: 5. Continuity with the previous release (same key, higher version)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ steps.plan.outputs.tag }}
+          CERT: ${{ steps.sign.outputs.cert }}
+          NEW_CODE: ${{ steps.plan.outputs.code }}
+          ACCEPT_SIGNER_CHANGE_TO: ${{ vars.ACCEPT_SIGNER_CHANGE_TO }}
+        run: BT="$ANDROID_HOME/build-tools/$BUILD_TOOLS" bash .github/release/check-continuity.sh
+
+      - name: Summary
+        env:
+          TAG: ${{ steps.plan.outputs.tag }}
+          NAME: ${{ steps.plan.outputs.name }}
+          CODE: ${{ steps.plan.outputs.code }}
+          CERT: ${{ steps.sign.outputs.cert }}
+        run: |
+          {
+            echo "### Release preflight passed"
+            echo "| | |"; echo "|---|---|"
+            echo "| Tag | \`$TAG\` |"
+            echo "| versionName | \`$NAME\` |"
+            echo "| versionCode | \`$CODE\` |"
+            echo "| Signing certificate SHA-256 | \`$CERT\` |"
+            echo
+            echo "Nothing was built or published by this run."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Remove temporary files
+        if: always()
+        run: rm -f "$RUNNER_TEMP/flowly-release.jks" "$RUNNER_TEMP/check.csr"
