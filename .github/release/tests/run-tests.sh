@@ -74,7 +74,7 @@ mut app/build.gradle.kts 's/keyAlias = "upload"/keyAlias = "other"/'
 case_ "key alias change is caught"          fail 'alias' cs;                                  unmut app/build.gradle.kts
 mut app/build.gradle.kts 's/System.getenv("VERSION_CODE")/"1"/'
 case_ "hard-coded version is caught"        fail 'no longer reads VERSION_CODE' cs;           unmut app/build.gradle.kts
-mut "$UPD" 's/Flowly-v\$tag.apk/Other-$tag.apk/'
+mut "$UPD" 's/name.endsWith(\".apk\", true)/name.endsWith(\".bin\", true)/'
 case_ "asset-naming drift is caught"        fail 'Asset naming contract' cs;                  unmut "$UPD"
 ( cd "$P" && git init -q . && git config user.email t@t && git config user.name t && echo x > my-upload-key.jks && git add -A >/dev/null 2>&1 && git add -f my-upload-key.jks && git commit -qm t ) >/dev/null 2>&1
 case_ "a committed key file is caught"      fail 'signing key file is committed' cs

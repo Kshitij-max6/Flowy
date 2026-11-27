@@ -32,8 +32,8 @@ if [ "${PROP_REPO,,}" != "${REPO,,}" ]; then
   err "Updater repository differs from this repository" "flowly.updateRepo in $PROPS is '$PROP_REPO' but this workflow runs in '$REPO'. If you renamed or moved the repository, update flowly.updateRepo. Otherwise installed apps would look for updates in the wrong place."
 fi
 
-grep -qF 'Flowly-v$tag.apk' "$UPDATER" \
-  || err "Asset naming contract changed" "$UPDATER no longer looks for assets named Flowly-v<version>.apk. The release workflow publishes that name; keep both in step."
+grep -qF 'name.endsWith(".apk", true)' "$UPDATER" \
+  || err "Asset naming contract changed" "$UPDATER no longer selects APK assets by the .apk suffix. The release workflow publishes a versioned APK asset; keep the updater's APK selection in step."
 grep -q 'fileprovider' "$MANIFEST" || err "FileProvider missing" "$MANIFEST has no fileprovider entry, so the updater could not hand the APK to the installer."
 
 tracked="$(git ls-files 2>/dev/null | grep -Ei '\.(jks|keystore|p12|pfx)$|keystore\.properties$' | grep -v '^debug\.keystore$' || true)"
