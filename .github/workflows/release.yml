@@ -1,5 +1,7 @@
+
 name: Release Flowly APK
 
+<<<<<<< HEAD
 # Publishes a signed, updatable APK. Two ways to start it (both run the SAME checks first):
 #   A. Push a version tag:   git tag v1.3.2 && git push origin v1.3.2
 #   B. No git needed:        Actions > "Release Flowly APK" > Run workflow > pick patch / minor / major
@@ -8,6 +10,11 @@ name: Release Flowly APK
 # Required repository secrets : KEYSTORE_BASE64, STORE_PASSWORD, KEY_PASSWORD
 # Optional secret             : GOOGLE_SERVICES_JSON_B64
 # Recommended repository variable (not secret): EXPECTED_CERT_SHA256
+=======
+# Push a tag like v1.2.0 to publish a signed APK as a GitHub Release.
+# The in-app updater reads that release, so the signing key MUST be the same every time (see RELEASING.md).
+
+>>>>>>> acc34096bcf9abd12a9c5e3249e534bbcdbebc19
 on:
   push:
     tags:
@@ -50,11 +57,16 @@ jobs:
   build:
     needs: preflight
     runs-on: ubuntu-latest
+<<<<<<< HEAD
     timeout-minutes: 60
     env:
       TAG: ${{ needs.preflight.outputs.tag }}
       VERSION_NAME: ${{ needs.preflight.outputs.name }}
       VERSION_CODE: ${{ needs.preflight.outputs.code }}
+=======
+    timeout-minutes: 45
+
+>>>>>>> acc34096bcf9abd12a9c5e3249e534bbcdbebc19
     steps:
       - uses: actions/checkout@v4
 
@@ -94,8 +106,51 @@ jobs:
         with:
           gradle-version: 9.3.1
 
+<<<<<<< HEAD
       # The debug signing config in app/build.gradle.kts points at this git-ignored file.
       - name: Debug keystore (only so Gradle can configure the debug signing config)
+=======
+      - name: Work out and validate version from the tag
+        id: ver
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+
+          # Accept v1.2.0, V1.2.0, or 1.2.0.
+          NAME="$(printf '%s' "$TAG" | sed -E 's/^[vV]//')"
+
+          # Validate MAJOR.MINOR.PATCH format.
+          if ! [[ "$NAME" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Release tag must be vMAJOR.MINOR.PATCH (example: v1.2.0); got $TAG"
+            exit 1
+          fi
+
+          IFS='.' read -r MAJ MIN PAT <<< "$NAME"
+
+          CODE=$(( MAJ * 10000 + MIN * 100 + PAT ))
+
+          if [ "$CODE" -le 10100 ]; then
+            echo "::error::Calculated versionCode $CODE must be greater than the Flowly 1.1.0 baseline (10100)."
+            exit 1
+          fi
+
+          echo "name=$NAME" >> "$GITHUB_OUTPUT"
+          echo "code=$CODE" >> "$GITHUB_OUTPUT"
+
+          echo "Release versionName=$NAME versionCode=$CODE"
+
+      - name: Restore the permanent release keystore
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+        run: |
+          if [ -z "$KEYSTORE_BASE64" ]; then
+            echo "KEYSTORE_BASE64 secret is missing - see RELEASING.md"
+            exit 1
+          fi
+
+          echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/flowly-release.jks"
+
+      - name: Debug keystore (needed by the debug signing config)
+>>>>>>> acc34096bcf9abd12a9c5e3249e534bbcdbebc19
         run: |
           keytool -genkeypair -v -keystore debug.keystore -storepass android \
             -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 \
@@ -105,7 +160,9 @@ jobs:
         env:
           GS_B64: ${{ secrets.GOOGLE_SERVICES_JSON_B64 }}
         run: |
-          if [ -n "$GS_B64" ]; then echo "$GS_B64" | base64 -d > app/google-services.json; fi
+          if [ -n "$GS_B64" ]; then
+            echo "$GS_B64" | base64 -d > app/google-services.json
+          fi
 
       - name: Run the updater unit tests
         env:
@@ -120,6 +177,7 @@ jobs:
           UPDATE_REPO: ${{ github.repository }}
         run: gradle :app:assembleRelease --stacktrace
 
+<<<<<<< HEAD
       - name: Name the APK and write its checksum
         id: assets
         run: bash .github/release/finalize-assets.sh
@@ -133,6 +191,43 @@ jobs:
           EXPECTED_CERT_SHA256: ${{ vars.EXPECTED_CERT_SHA256 }}
           UPDATE_REPO: ${{ github.repository }}
         run: BT="$ANDROID_HOME/build-tools/$BUILD_TOOLS" bash .github/release/verify-apk.sh
+=======
+      - name: Verify APK version metadata matches the release tag
+        run: |
+          APK=$(ls app/build/outputs/apk/release/*.apk | head -n1)
+          AAPT="$ANDROID_HOME/build-tools/36.0.0/aapt"
+
+          BADGING=$("$AAPT" dump badging "$APK")
+
+          echo "$BADGING" | grep -F "versionCode='${{ steps.ver.outputs.code }}'" >/dev/null \
+            || { echo "::error::APK versionCode does not match tag-derived versionCode"; exit 1; }
+
+          echo "$BADGING" | grep -F "versionName='${{ steps.ver.outputs.name }}'" >/dev/null \
+            || { echo "::error::APK versionName does not match tag-derived versionName"; exit 1; }
+
+          echo "Verified APK metadata for ${{ steps.ver.outputs.name }} (${{ steps.ver.outputs.code }})"
+
+      # Fails the build if the repository the in-app updater should check did not reach the APK.
+      - name: Verify the update repository is baked into the APK
+        env:
+          UPDATE_REPO: ${{ github.repository }}
+        run: |
+          APK=$(ls app/build/outputs/apk/release/*.apk | head -n1)
+
+          unzip -p "$APK" 'classes*.dex' | grep -a -F -q -- "$UPDATE_REPO" \
+            || { echo "::error::$APK does not contain the update repository $UPDATE_REPO"; exit 1; }
+
+          echo "Update repository baked into $APK: $UPDATE_REPO"
+
+      - name: Name the APK and write its checksum
+        run: |
+          APK=$(ls app/build/outputs/apk/release/*.apk | head -n1)
+
+          cp "$APK" "Flowly-${GITHUB_REF_NAME}.apk"
+
+          sha256sum "Flowly-${GITHUB_REF_NAME}.apk" \
+            > "Flowly-${GITHUB_REF_NAME}.apk.sha256"
+>>>>>>> acc34096bcf9abd12a9c5e3249e534bbcdbebc19
 
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
