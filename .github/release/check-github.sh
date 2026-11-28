@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # GitHub-side checks before any build: public repo (the updater has no token), commit is on the default branch,
-# the tag is not already published, and the workflow token can really create releases.
-# Env: REPO, TAG, EVENT (push|workflow_dispatch), DEFAULT_BRANCH, REF_NAME, GITHUB_SHA, RUN_ID, GH_TOKEN
+# and the tag is not already published. READ-ONLY: it never creates, edits or deletes anything on GitHub.
+# Env: REPO, TAG, EVENT (push|workflow_dispatch), DEFAULT_BRANCH, REF_NAME, GITHUB_SHA, GH_TOKEN
 set -euo pipefail
 . "$(dirname "$0")/lib.sh"
 need gh; need jq
@@ -32,11 +32,8 @@ elif ! grep -qi 'not found' <<<"$VIEW"; then
   err "Couldn't read releases" "gh release view failed: $(echo "$VIEW" | head -n1)"
 fi
 
-# 4. Can this token really create releases? Create and delete a hidden draft (it never creates a tag).
-set +e
-ID="$(gh api -X POST "repos/$REPO/releases" -f tag_name="preflight-probe-${RUN_ID:-0}" -f name="Flowly release preflight probe (safe to delete)" -F draft=true --jq .id 2>/dev/null)"; rc=$?
-set -e
-[ "$rc" -eq 0 ] && [ -n "$ID" ] || err "GitHub permissions" "The workflow token cannot create releases. In the repository open Settings > Actions > General > Workflow permissions, choose 'Read and write permissions', save, and run again."
-gh api -X DELETE "repos/$REPO/releases/$ID" >/dev/null 2>&1 || warn "Probe cleanup" "A hidden draft release named 'preflight probe' was left behind; delete it on the Releases page."
+# Deliberately NOT checked here: whether the token may create releases. Proving that would require creating
+# something (even a hidden draft), and preflight is strictly read-only. The publish job in release.yml declares
+# "contents: write" for itself, which works regardless of the repository's default token setting.
 
-note "GitHub checks passed: public repository, commit on $DEFAULT_BRANCH, $TAG unused, release permission works."
+note "GitHub checks passed (read-only): public repository, commit on $DEFAULT_BRANCH, $TAG unused. Release-creation permission is not tested by preflight."

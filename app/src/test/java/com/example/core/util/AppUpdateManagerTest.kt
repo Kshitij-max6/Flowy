@@ -1,7 +1,9 @@
 package com.example.core.util
 
 import com.example.core.update.AppUpdateManager
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -61,5 +63,40 @@ class AppUpdateManagerTest {
         // A 403 with quota left is not a rate limit; don't claim it is.
         assertFalse(AppUpdateManager.httpFailureMessage(403, "42", null).contains(limit))
         assertTrue(AppUpdateManager.httpFailureMessage(418, null, null).contains("418"))
+    }
+
+    // ------------------------------------------------------------ checksum file contract (sha256sum format)
+
+    private val apkName = "Flowly-v1.2.0.apk"
+    private val hash = "0123456789abcdef".repeat(4)
+
+    @Test fun aCorrectChecksumFileIsAccepted() {
+        assertEquals(hash, AppUpdateManager.parseChecksum("$hash  $apkName\n", apkName))
+        assertEquals(hash, AppUpdateManager.parseChecksum("$hash  $apkName", apkName))
+        assertEquals(hash, AppUpdateManager.parseChecksum("$hash *$apkName", apkName)) // binary-mode marker
+        assertEquals(hash, AppUpdateManager.parseChecksum("$hash\t$apkName", apkName))
+    }
+
+    @Test fun checksumFilesAreForgivingAboutWhitespaceAndCase() {
+        assertEquals(hash, AppUpdateManager.parseChecksum("  \n$hash  $apkName\r\n\r\n", apkName)) // CRLF, blank lines
+        assertEquals(hash, AppUpdateManager.parseChecksum("${hash.uppercase()}  $apkName", apkName))
+        assertEquals(hash, AppUpdateManager.parseChecksum(hash, apkName)) // a bare hash
+    }
+
+    @Test fun aChecksumForAnotherApkIsRejected() {
+        assertNull(AppUpdateManager.parseChecksum("$hash  Flowly-v1.1.0.apk", apkName))
+        assertNull(AppUpdateManager.parseChecksum("$hash  other.apk", apkName))
+        assertNull(AppUpdateManager.parseChecksum("$hash  Flowly-v1.2.0.apk.sha256", apkName))
+    }
+
+    @Test fun emptyMalformedOrAmbiguousChecksumFilesAreRejected() {
+        assertNull(AppUpdateManager.parseChecksum("", apkName))
+        assertNull(AppUpdateManager.parseChecksum("   \n  \n", apkName))
+        assertNull(AppUpdateManager.parseChecksum(hash.dropLast(1) + "  $apkName", apkName))           // 63 digits
+        assertNull(AppUpdateManager.parseChecksum(hash + "a  $apkName", apkName))                      // 65 digits
+        assertNull(AppUpdateManager.parseChecksum("g".repeat(64) + "  $apkName", apkName))             // not hex
+        assertNull(AppUpdateManager.parseChecksum("$hash$apkName", apkName))                           // no separator
+        assertNull(AppUpdateManager.parseChecksum("<html>Not Found</html>", apkName))
+        assertNull(AppUpdateManager.parseChecksum("$hash  $apkName\n${"b".repeat(64)}  $apkName", apkName)) // two lines
     }
 }

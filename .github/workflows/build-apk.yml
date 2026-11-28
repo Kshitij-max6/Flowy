@@ -1,9 +1,20 @@
-name: Build Flowly debug APK
+name: Build Flowly debug APK (testing only - not updatable)
 
+# TESTING ONLY. This APK is signed with a throw-away key created fresh on every run, so:
+#   - it can NEVER be updated by another build (Android refuses a different signer), and
+#   - it must NOT be given to other people. Real, updatable APKs come only from "Release Flowly APK".
+# (This file replaces the former main.yml, which was a duplicate: same triggers, same artifact.)
 on:
   workflow_dispatch:
   push:
-    branches: [ main, master ]
+    branches: [main, master]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: debug-apk-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build:
@@ -17,22 +28,22 @@ jobs:
           distribution: temurin
           java-version: 17
 
-      # Installs the Android SDK and accepts licences (platform 36 is fetched by AGP on demand).
       - uses: android-actions/setup-android@v3
         with:
-          packages: ""
+          packages: ''
 
       - name: Install required Android SDK packages
         run: |
           sdkmanager --install "platform-tools" "platforms;android-36" "build-tools;36.0.0"
+          yes | sdkmanager --licenses >/dev/null || true
 
       # The project ships gradle-wrapper.properties but no gradlew/jar, so use Gradle directly.
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: 9.3.1
 
-      # debug.keystore is git-ignored but referenced by the debug signing config.
-      - name: Create debug keystore
+      # debug.keystore is git-ignored but referenced by the debug signing config. A NEW key every run (by design).
+      - name: Create throw-away debug keystore
         run: |
           keytool -genkeypair -v -keystore debug.keystore -storepass android \
             -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 \
@@ -45,20 +56,34 @@ jobs:
         run: |
           if [ -n "$GS_B64" ]; then echo "$GS_B64" | base64 -d > app/google-services.json; fi
 
+      - name: Run the updater unit tests
+        env:
+          UPDATE_REPO: ${{ github.repository }}
+        run: gradle :app:testDebugUnitTest --tests 'com.example.core.util.AppUpdate*' --stacktrace
+
       - name: Build debug APK
         env:
           UPDATE_REPO: ${{ github.repository }}
         run: gradle :app:assembleDebug --stacktrace
 
       # Fails the build if the repository the in-app updater should check did not reach the APK.
+      # ("grep -c" reads the whole stream; "grep -q" can fail spuriously under pipefail on big files.)
       - name: Verify the update repository is baked into the APK
         env:
           UPDATE_REPO: ${{ github.repository }}
         run: |
-          APK=$(ls app/build/outputs/apk/debug/*.apk | head -n1)
-          unzip -p "$APK" 'classes*.dex' | grep -a -F -q -- "$UPDATE_REPO" \
-            || { echo "::error::$APK does not contain the update repository $UPDATE_REPO"; exit 1; }
+          APK=app/build/outputs/apk/debug/app-debug.apk
+          HITS="$(unzip -p "$APK" 'classes*.dex' | grep -a -F -c -- "$UPDATE_REPO" || true)"
+          [ "${HITS:-0}" -gt 0 ] || { echo "::error::$APK does not contain the update repository $UPDATE_REPO"; exit 1; }
           echo "Update repository baked into $APK: $UPDATE_REPO"
+
+      - name: Warn that this APK is not distributable
+        run: |
+          {
+            echo "### Debug APK - testing only"
+            echo "Signed with a throw-away key created for this run. **Do not give it to other people**: it can never be updated by any later build."
+            echo "For a real, updatable APK use the *Release Flowly APK* workflow (RELEASING.md)."
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload APK
         uses: actions/upload-artifact@v4

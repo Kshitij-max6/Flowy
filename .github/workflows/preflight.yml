@@ -25,6 +25,13 @@ on:
       version:
         type: string
         default: ''
+    secrets:
+      KEYSTORE_BASE64:
+        required: false
+      STORE_PASSWORD:
+        required: false
+      KEY_PASSWORD:
+        required: false
     outputs:
       tag:
         value: ${{ jobs.preflight.outputs.tag }}
@@ -35,8 +42,9 @@ on:
       cert:
         value: ${{ jobs.preflight.outputs.cert }}
 
+# STRICTLY READ-ONLY: this workflow never creates, edits or deletes releases, tags, branches or repository content.
 permissions:
-  contents: write
+  contents: read
 
 env:
   APP_ID: com.kshitij.flowly
@@ -71,10 +79,12 @@ jobs:
           export EXISTING_TAGS
           bash .github/release/plan-version.sh
 
-      - name: 2. Repository configuration
+      - name: 2. Repository configuration and workflow policy
         env:
           REPO: ${{ github.repository }}
-        run: bash .github/release/check-static.sh
+        run: |
+          bash .github/release/check-static.sh
+          bash .github/release/check-workflows.sh
 
       - uses: actions/setup-java@v4
         with:
@@ -90,7 +100,7 @@ jobs:
           EXPECTED_CERT_SHA256: ${{ vars.EXPECTED_CERT_SHA256 }}
         run: bash .github/release/check-signing.sh
 
-      - name: 4. GitHub (public repo, branch, unused tag, permissions)
+      - name: 4. GitHub (public repo, branch, unused tag; read-only)
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
@@ -98,7 +108,6 @@ jobs:
           EVENT: ${{ github.event_name }}
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
           REF_NAME: ${{ github.ref_name }}
-          RUN_ID: ${{ github.run_id }}
         run: bash .github/release/check-github.sh
 
       - uses: android-actions/setup-android@v3
@@ -117,6 +126,7 @@ jobs:
           TAG: ${{ steps.plan.outputs.tag }}
           CERT: ${{ steps.sign.outputs.cert }}
           NEW_CODE: ${{ steps.plan.outputs.code }}
+          BASELINE_CERT_SHA256: ${{ vars.BASELINE_CERT_SHA256 }}
           ACCEPT_SIGNER_CHANGE_TO: ${{ vars.ACCEPT_SIGNER_CHANGE_TO }}
         run: BT="$ANDROID_HOME/build-tools/$BUILD_TOOLS" bash .github/release/check-continuity.sh
 
@@ -135,7 +145,7 @@ jobs:
             echo "| versionCode | \`$CODE\` |"
             echo "| Signing certificate SHA-256 | \`$CERT\` |"
             echo
-            echo "Nothing was built or published by this run."
+            echo "Nothing was built or published by this run. Release-creation permission is not tested here (preflight is read-only); the publish job declares it."
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Remove temporary files

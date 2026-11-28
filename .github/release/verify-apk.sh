@@ -19,7 +19,8 @@ note "APK says: package=$GOT_ID versionName=$GOT_NAME versionCode=$GOT_CODE"
 [ "$GOT_ID"   = "$APP_ID" ]          || bad "applicationId is '$GOT_ID', expected '$APP_ID'."
 [ "$GOT_NAME" = "${WANT_NAME:?}" ]   || bad "versionName is '$GOT_NAME', expected '$WANT_NAME' (from ${TAG:-the tag})."
 [ "$GOT_CODE" = "${WANT_CODE:?}" ]   || bad "versionCode is '$GOT_CODE', expected '$WANT_CODE' (from ${TAG:-the tag})."
-if printf '%s\n' "$BADGING" | grep -q 'application-debuggable'; then bad "The APK is debuggable; only release builds may be published."; fi
+# Here-string (no pipe): a pipe into "grep -q" can die of SIGPIPE under pipefail on large output and make this check silently pass.
+if grep -q 'application-debuggable' <<<"$BADGING"; then bad "The APK is debuggable; only release builds may be published."; fi
 
 "$BT/apksigner" verify --verbose --print-certs "$APK" > "$tmp/sig.txt" || bad "apksigner could not verify the APK signature."
 grep -Eq 'Verified using v(2|3) scheme .*: true' "$tmp/sig.txt" || bad "The APK has no valid v2/v3 signature."
@@ -31,6 +32,9 @@ if [ -n "${EXPECTED_CERT_SHA256:-}" ]; then
   [ "$APK_CERT" = "$(norm_hex "$EXPECTED_CERT_SHA256")" ] || bad "The APK signer does not match EXPECTED_CERT_SHA256."
 fi
 
-unzip -p "$APK" 'classes*.dex' | grep -a -F -q -- "${UPDATE_REPO:?}" \
+# "grep -c" reads the whole stream. "grep -q" would stop early, unzip would get SIGPIPE, and pipefail would report a
+# false failure on every real (multi-megabyte) dex file.
+HITS="$(unzip -p "$APK" 'classes*.dex' | grep -a -F -c -- "${UPDATE_REPO:?}" || true)"
+[ "${HITS:-0}" -gt 0 ] \
   || bad "The APK does not contain the update repository $UPDATE_REPO, so its in-app updater could not work."
 note "Verified: package, version, release build, signature, signing identity and update repository."

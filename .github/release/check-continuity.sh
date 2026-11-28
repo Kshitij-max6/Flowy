@@ -3,7 +3,10 @@
 #  - its APK must be signed by the SAME certificate as the key restored for this release
 #  - the new versionCode must be higher than that APK's real versionCode
 #  - its published checksum must match its APK
-# Env: REPO, TAG, CERT, NEW_CODE, BT (build-tools dir with apksigner + aapt2), GH_TOKEN, ACCEPT_SIGNER_CHANGE_TO (optional)
+#  - APKs distributed OUTSIDE GitHub Releases (e.g. sent to friends) are covered by BASELINE_CERT_SHA256
+# Env: REPO, TAG, CERT, NEW_CODE, BT (build-tools dir with apksigner + aapt2), GH_TOKEN,
+#      BASELINE_CERT_SHA256 (variable: 64-hex signer of already-distributed APKs, or the word "none"),
+#      ACCEPT_SIGNER_CHANGE_TO (optional, explicit approval of an identity change)
 set -euo pipefail
 . "$(dirname "$0")/lib.sh"
 need gh; need jq
@@ -11,6 +14,27 @@ REPO="${REPO:?}"; TAG="${TAG:?}"; CERT="$(norm_hex "${CERT:?}")"; NEW_CODE="${NE
 [ -x "$BT/apksigner" ] && [ -x "$BT/aapt2" ] || err "Build tools missing" "apksigner/aapt2 were not found in $BT."
 
 tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
+# --- Baseline: the signer of APKs that were handed out before (or outside) GitHub Releases ------------------------
+BASE="$(printf '%s' "${BASELINE_CERT_SHA256:-}" | tr -d ' \r\n')"
+BASE_LC="$(printf '%s' "$BASE" | tr 'A-Z' 'a-z')"
+BASELINE_KNOWN=0
+if [ "$BASE_LC" = none ]; then
+  note "Baseline: you declared that no APK signed with any other key was ever distributed."
+elif [ -n "$BASE" ]; then
+  BASE_HEX="$(norm_hex "$BASE")"
+  is_sha256 "$BASE_HEX" || err "BASELINE_CERT_SHA256 is malformed" "The repository variable BASELINE_CERT_SHA256 must be a 64-digit SHA-256 fingerprint or the word none."
+  BASELINE_KNOWN=1
+  if [ "$BASE_HEX" != "$CERT" ]; then
+    if [ -n "${ACCEPT_SIGNER_CHANGE_TO:-}" ] && [ "$(norm_hex "$ACCEPT_SIGNER_CHANGE_TO")" = "$CERT" ]; then
+      warn "Signing identity change accepted" "APKs already distributed are signed by $BASE_HEX; this release uses $CERT because ACCEPT_SIGNER_CHANGE_TO says so. Everyone with the old app must back up, uninstall and reinstall (RELEASING.md > Recovery)."
+    else
+      err "Signing key differs from the distributed APK" "APKs already in people's hands are signed by $BASE_HEX but the key restored for this release is $CERT. Those phones would REFUSE this update. Restore the original key, or, if you really accept a one-time reinstall for everyone, set the repository variable ACCEPT_SIGNER_CHANGE_TO to $CERT (RELEASING.md > Signing identity)."
+    fi
+  else
+    note "Baseline: same certificate as the APKs already distributed."
+  fi
+fi
+
 LIST="$(gh release list --repo "$REPO" --limit 50 --json tagName,isDraft,isPrerelease 2>/dev/null)" \
   || err "Couldn't list releases" "gh release list failed for $REPO. Re-run the workflow."
 
@@ -22,7 +46,10 @@ while IFS= read -r t; do
 done < <(jq -r '.[] | select((.isDraft|not) and (.isPrerelease|not)) | .tagName' <<<"$LIST")
 
 if [ -z "$best" ]; then
-  note "No earlier published release, so key continuity cannot be compared yet. After this release, pin EXPECTED_CERT_SHA256 (RELEASING.md)."
+  if [ -z "$BASE" ]; then
+    err "Signing continuity is unresolved" "There is no earlier GitHub release to compare with, and the repository variable BASELINE_CERT_SHA256 is not set, so nothing proves this key matches the APKs people already have. Set BASELINE_CERT_SHA256 to the signer fingerprint of the APK you distributed, or to the word none if no APK signed with another key was ever given to anyone (RELEASING.md > Signing identity). Nothing was built."
+  fi
+  note "No earlier published release to compare with; continuity rests on BASELINE_CERT_SHA256."
   out previous_apk_code ""; exit 0
 fi
 

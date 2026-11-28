@@ -18,7 +18,7 @@ max_code=0; max_tag=""; declare -A seen=()
 while IFS= read -r t; do
   [ -n "$t" ] || continue
   [ "$t" = "$SELF" ] && continue
-  c="$(version_code "$t" 2>/dev/null)" || continue          # ignore tags that are not release versions
+  c="$(lenient_version_code "$t" 2>/dev/null)" || continue   # ignore tags that are not release versions (twins like V.1.2.0 still count as taken)
   seen["$c"]="$t"
   if (( c > max_code )); then max_code="$c"; max_tag="$t"; fi
 done <<< "${EXISTING_TAGS:-}"

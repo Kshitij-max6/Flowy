@@ -89,6 +89,9 @@ object AppUpdateManager {
     private const val GITHUB_API = "https://api.github.com"
     private val REPO_PATTERN = Regex("[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+")
     private val VERSION_PATTERN = Regex("\\d+(\\.\\d+)*")
+    private val SHA256_HEX = Regex("[A-Fa-f0-9]{64}")
+    // One `sha256sum` line: 64 hex digits, then (optionally) whitespace, an optional binary-mode `*`, and the file name.
+    private val CHECKSUM_LINE = Regex("([A-Fa-f0-9]{64})(?:\\s+\\*?(\\S.*))?")
 
     internal const val MSG_BAD_REPO =
         "This build doesn't know which GitHub repository to check. Build it with the release workflow, or set flowly.updateRepo=owner/repo in gradle.properties"
@@ -165,21 +168,27 @@ object AppUpdateManager {
         if (!isNewer(tag, currentVersion)) return UpdateCheckResult.UpToDate
 
         val assets = json.optJSONArray("assets")
-        var apk: JSONObject? = null
+        val apkAssets = mutableListOf<JSONObject>()
         var shaAsset: String? = null
+        val expectedApkName = "Flowly-v$tag.apk"
         if (assets != null) {
             for (i in 0 until assets.length()) {
                 val a = assets.optJSONObject(i) ?: continue
                 val name = a.optString("name")
-                if (name.endsWith(".apk", true) && apk == null) apk = a
-                if (name.endsWith(".sha256", true)) shaAsset = a.optString("browser_download_url")
+                if (name.endsWith(".apk", true)) apkAssets += a
+                if (name == "$expectedApkName.sha256") shaAsset = a.optString("browser_download_url")
             }
         }
-        val apkAsset = apk?.takeIf { it.optString("browser_download_url").isNotBlank() }
-            ?: return UpdateCheckResult.Failed("Release has no APK attached")
+        if (apkAssets.size != 1 || apkAssets.singleOrNull()?.optString("name") != expectedApkName) {
+            return UpdateCheckResult.Failed("Release must contain exactly one APK named $expectedApkName")
+        }
+        val apkAsset = apkAssets.single()
+        if (apkAsset.optString("browser_download_url").isBlank()) {
+            return UpdateCheckResult.Failed("Release APK has no download URL")
+        }
 
-        var sha = apkAsset.optString("digest").removePrefix("sha256:").takeIf { it.length == 64 }
-        if (sha == null && !shaAsset.isNullOrBlank()) sha = fetchSha(shaAsset)
+        var sha = apkAsset.optString("digest").removePrefix("sha256:").takeIf { SHA256_HEX.matches(it) }
+        if (sha == null && !shaAsset.isNullOrBlank()) sha = fetchSha(shaAsset)?.takeIf { SHA256_HEX.matches(it) }
 
         val notes = json.optString("body")
         return UpdateCheckResult.Available(
@@ -209,11 +218,27 @@ object AppUpdateManager {
         else -> e.localizedMessage ?: "Could not reach GitHub"
     }
 
+    /**
+     * Reads a `sha256sum`-style checksum file: exactly one line, `<64 hex digits>  <file name>` (a bare hash is also
+     * accepted). Returns the lower-case hash, or null when the content is empty, has several lines, is not a real
+     * SHA-256, or names a different file than [apkName] (a checksum that belongs to another APK must never be used).
+     */
+    internal fun parseChecksum(content: String, apkName: String): String? {
+        val lines = content.lines().map { it.trim() }.filter { it.isNotEmpty() }
+        if (lines.size != 1) return null
+        val match = CHECKSUM_LINE.matchEntire(lines[0]) ?: return null
+        val namedFile = match.groupValues[2].trim()
+        if (namedFile.isNotEmpty() && namedFile != apkName) return null
+        return match.groupValues[1].lowercase()
+    }
+
     private fun fetchSha(url: String): String? = try {
+        // The checksum asset is named "<apk name>.sha256", so the APK it must describe is the URL's file name minus that suffix.
+        val apkName = url.substringBefore('?').substringAfterLast('/').removeSuffix(".sha256")
         val conn = URL(url).openConnection() as HttpURLConnection
         conn.connectTimeout = 10_000; conn.readTimeout = 15_000
-        conn.inputStream.bufferedReader().use { it.readText() }.trim().split(Regex("\\s+")).firstOrNull()
-            ?.takeIf { it.length == 64 }
+        if (conn.responseCode != 200) null
+        else parseChecksum(conn.inputStream.bufferedReader().use { it.readText() }, apkName)
     } catch (_: Exception) { null }
 
     /**

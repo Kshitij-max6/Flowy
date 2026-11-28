@@ -2,15 +2,26 @@ name: Release scripts self-test
 
 # Re-runs the release scripts against simulated good and bad situations whenever they (or the workflows) change,
 # so a future edit cannot quietly break the release safety checks.
+# It also reads app/build.gradle.kts, gradle.properties, the updater and the docs, so changes to those re-run it too.
 on:
   push:
     paths:
       - '.github/release/**'
       - '.github/workflows/**'
+      - '.github/dependabot.yml'
+      - 'app/build.gradle.kts'
+      - 'gradle.properties'
+      - 'app/src/main/java/com/example/core/update/**'
+      - 'RELEASING.md'
   pull_request:
     paths:
       - '.github/release/**'
       - '.github/workflows/**'
+      - '.github/dependabot.yml'
+      - 'app/build.gradle.kts'
+      - 'gradle.properties'
+      - 'app/src/main/java/com/example/core/update/**'
+      - 'RELEASING.md'
   workflow_dispatch:
 
 permissions:

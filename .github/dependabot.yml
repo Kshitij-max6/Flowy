@@ -1,0 +1,9 @@
+# Keeps the GitHub Actions used by the release system current, so a deprecated action shows up as a reviewable
+# pull request instead of a surprise failure on release day. Never auto-merged.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5

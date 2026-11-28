@@ -91,6 +91,8 @@ class AppUpdateCheckTest {
         assertTrue(parse(release(assets = "[]")) is UpdateCheckResult.Failed)
         assertTrue(parse(release(assets = """[{"name":"notes.txt","browser_download_url":"https://example.test/n.txt"}]""")) is UpdateCheckResult.Failed)
         assertTrue(parse(release(assets = """[{"name":"Flowly.apk","size":5}]""")) is UpdateCheckResult.Failed) // no download URL
+        assertTrue(parse(release(assets = """[{"name":"Flowly-v9.0.0.apk","browser_download_url":"https://example.test/wrong.apk"}]""")) is UpdateCheckResult.Failed)
+        assertTrue(parse(release(assets = """[$apk,$apk]""")) is UpdateCheckResult.Failed)
         assertTrue(parse(release(assets = """[1,"x",null]""")) is UpdateCheckResult.Failed)
     }
 
@@ -106,6 +108,26 @@ class AppUpdateCheckTest {
 
         val none = parse(release(assets = "[$noDigest]")) as UpdateCheckResult.Available
         assertNull(none.info.sha256) // the downloader refuses to install without a checksum
+    }
+
+    @Test
+    fun `a checksum that is not a real sha256 is never trusted`() {
+        val noDigest = """{"name":"Flowly-v1.2.0.apk","size":9,"browser_download_url":"https://example.test/a.apk"}"""
+        val shaFile = """{"name":"Flowly-v1.2.0.apk.sha256","browser_download_url":"https://example.test/a.sha256"}"""
+        val r = parse(release(assets = "[$noDigest,$shaFile]")) { "z".repeat(64) } as UpdateCheckResult.Available
+        assertNull(r.info.sha256) // 64 characters but not hex: the downloader will refuse to install
+        val badDigest = """{"name":"Flowly-v1.2.0.apk","browser_download_url":"https://example.test/a.apk","digest":"sha256:${"z".repeat(64)}"}"""
+        assertNull((parse(release(assets = "[$badDigest]")) as UpdateCheckResult.Available).info.sha256)
+    }
+
+    @Test
+    fun `a checksum asset that belongs to another APK is ignored`() {
+        val noDigest = """{"name":"Flowly-v1.2.0.apk","size":9,"browser_download_url":"https://example.test/a.apk"}"""
+        val foreign = """{"name":"Flowly-v1.1.0.apk.sha256","browser_download_url":"https://example.test/old.sha256"}"""
+        var fetched = false
+        val r = parse(release(assets = "[$noDigest,$foreign]")) { fetched = true; "b".repeat(64) } as UpdateCheckResult.Available
+        assertFalse("must not even download a foreign checksum", fetched)
+        assertNull(r.info.sha256)
     }
 
     @Test

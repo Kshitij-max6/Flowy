@@ -1,17 +1,24 @@
 name: Release Flowly APK
 
 # Publishes a signed, updatable APK. Two ways to start it (both run the SAME checks first):
-#   A. Push a version tag:   git tag v1.3.2 && git push origin v1.3.2
+#   A. Push a version tag:   git tag v1.3.2 && git push origin v1.3.2     (tag must be exactly vMAJOR.MINOR.PATCH)
 #   B. No git needed:        Actions > "Release Flowly APK" > Run workflow > pick patch / minor / major
 #
+# Three jobs, least privilege:
+#   preflight  read-only checks (no build, nothing published)
+#   build      builds + verifies the APK; the ONLY job that sees the signing secrets; read-only token
+#   publish    the ONLY job with write access; sees no signing secrets; re-checks the files, publishes, confirms
+#
 # The signing key is NEVER created here: it is restored from the repository secrets (RELEASING.md).
-# Required repository secrets : KEYSTORE_BASE64, STORE_PASSWORD, KEY_PASSWORD
-# Optional secret             : GOOGLE_SERVICES_JSON_B64
-# Recommended repository variable (not secret): EXPECTED_CERT_SHA256
+# Required repository secrets   : KEYSTORE_BASE64, STORE_PASSWORD, KEY_PASSWORD
+# Optional secret               : GOOGLE_SERVICES_JSON_B64
+# Required repository variables : EXPECTED_CERT_SHA256 (signing identity pin), and BASELINE_CERT_SHA256 until a
+#                                 first release exists (RELEASING.md > Signing identity)
 on:
   push:
     tags:
-      - 'v*'
+      # GitHub tag filters are globs, NOT regular expressions: '+' repeats the previous class, '.' is a literal dot.
+      - 'v[0-9]+.[0-9]+.[0-9]+'
   workflow_dispatch:
     inputs:
       bump:
@@ -24,8 +31,9 @@ on:
         type: string
         default: ''
 
+# Everything is read-only unless a job says otherwise.
 permissions:
-  contents: write
+  contents: read
 
 # One release at a time, ever.
 concurrency:
@@ -43,18 +51,26 @@ jobs:
     with:
       bump: ${{ inputs.bump || 'patch' }}
       version: ${{ inputs.version || '' }}
-    secrets: inherit
+    secrets:
+      KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+      STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
+      KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
     permissions:
-      contents: write
+      contents: read
 
   build:
     needs: preflight
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    permissions:
+      contents: read
     env:
       TAG: ${{ needs.preflight.outputs.tag }}
       VERSION_NAME: ${{ needs.preflight.outputs.name }}
       VERSION_CODE: ${{ needs.preflight.outputs.code }}
+    outputs:
+      file: ${{ steps.assets.outputs.file }}
+      sha256: ${{ steps.sum.outputs.sha256 }}
     steps:
       - uses: actions/checkout@v4
 
@@ -79,7 +95,7 @@ jobs:
           APPROVED: ${{ needs.preflight.outputs.cert }}
           RESTORED: ${{ steps.sign.outputs.cert }}
         run: |
-          [ "$APPROVED" = "$RESTORED" ] || { echo "::error title=Key changed during the run::The signing key restored for the build differs from the one the preflight approved. Nothing was published."; exit 1; }
+          [ -n "$APPROVED" ] && [ "$APPROVED" = "$RESTORED" ] || { echo "::error title=Key changed during the run::The signing key restored for the build differs from the one the preflight approved. Nothing was published."; exit 1; }
 
       - uses: android-actions/setup-android@v3
         with:
@@ -134,14 +150,62 @@ jobs:
           UPDATE_REPO: ${{ github.repository }}
         run: BT="$ANDROID_HOME/build-tools/$BUILD_TOOLS" bash .github/release/verify-apk.sh
 
+      - name: Record the checksum of the verified APK
+        id: sum
+        env:
+          APK: ${{ steps.assets.outputs.file }}
+        run: echo "sha256=$(sha256sum "$APK" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+
+      - name: Hand the verified files to the publish job
+        uses: actions/upload-artifact@v4
+        with:
+          name: flowly-release-files
+          path: |
+            ${{ steps.assets.outputs.file }}
+            ${{ steps.assets.outputs.file }}.sha256
+          if-no-files-found: error
+          retention-days: 3
+
+      - name: Remove temporary signing files
+        if: always()
+        run: rm -f "$RUNNER_TEMP/flowly-release.jks" "$RUNNER_TEMP/check.csr" debug.keystore app/google-services.json
+
+  publish:
+    needs: [preflight, build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # The ONLY write permission in the whole release system. No signing secret is used in this job.
+    permissions:
+      contents: write
+    env:
+      TAG: ${{ needs.preflight.outputs.tag }}
+      APK: ${{ needs.build.outputs.file }}
+      VERIFIED_SHA256: ${{ needs.build.outputs.sha256 }}
+    steps:
+      - name: Download the verified files
+        uses: actions/download-artifact@v4
+        with:
+          name: flowly-release-files
+          path: release-files
+
+      # The files must be exactly the ones the build job verified: right name, matching checksum file, same digest.
+      - name: Re-check the files before publishing
+        run: |
+          set -euo pipefail
+          [[ "$APK" =~ ^Flowly-v[0-9]+\.[0-9]+\.[0-9]+\.apk$ ]] || { echo "::error title=Asset name::'$APK' is not Flowly-vX.Y.Z.apk."; exit 1; }
+          [ "$APK" = "Flowly-$TAG.apk" ] || { echo "::error title=Asset name::'$APK' does not belong to tag $TAG."; exit 1; }
+          [ "$(ls release-files | wc -l)" -eq 2 ] || { echo "::error title=Unexpected files::release-files must hold exactly the APK and its .sha256."; exit 1; }
+          ( cd release-files && sha256sum -c "$APK.sha256" ) || { echo "::error title=Checksum::The downloaded APK does not match its checksum file."; exit 1; }
+          [ "$(sha256sum "release-files/$APK" | cut -d' ' -f1)" = "$VERIFIED_SHA256" ] || { echo "::error title=Checksum::The APK is not the one the build job verified."; exit 1; }
+
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.TAG }}
           target_commitish: ${{ github.sha }}
           files: |
-            ${{ steps.assets.outputs.file }}
-            ${{ steps.assets.outputs.file }}.sha256
+            release-files/${{ env.APK }}
+            release-files/${{ env.APK }}.sha256
           fail_on_unmatched_files: true
           generate_release_notes: true
           draft: false
@@ -152,7 +216,6 @@ jobs:
       - name: Confirm what the app will find
         env:
           GH_TOKEN: ${{ github.token }}
-          APK: ${{ steps.assets.outputs.file }}
         run: |
           set -euo pipefail
           for _ in 1 2 3 4 5 6; do
@@ -160,15 +223,13 @@ jobs:
             [ "$LATEST" = "$TAG" ] && break
             sleep 10
           done
-          [ "$LATEST" = "$TAG" ] || { echo "::error title=Release is not 'latest'::GitHub reports '${LATEST:-nothing}' as the latest release, not $TAG, so Flowly would not see it. Check the Releases page (it must not be a draft or pre-release)."; exit 1; }
+          [ "$LATEST" = "$TAG" ] || { echo "::error title=Release is not 'latest'::GitHub reports '${LATEST:-nothing}' as the latest release, not $TAG, so Flowly would not see it. Check the Releases page (it must not be a draft or pre-release; RELEASING.md > Recovery)."; exit 1; }
+          COUNT="$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq '[.assets[].name | select(endswith(".apk"))] | length')"
+          [ "$COUNT" = 1 ] || { echo "::error title=Wrong number of APKs::The published release has $COUNT APK files; the updater needs exactly one."; exit 1; }
           mkdir -p "$RUNNER_TEMP/dl"
           gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --dir "$RUNNER_TEMP/dl" --pattern "$APK" --pattern "$APK.sha256" --clobber
           ( cd "$RUNNER_TEMP/dl" && sha256sum -c "$APK.sha256" ) \
             || { echo "::error title=Published files do not match::The APK that users download does not match the published checksum."; exit 1; }
-          cmp -s "$RUNNER_TEMP/dl/$APK" "$APK" \
+          cmp -s "$RUNNER_TEMP/dl/$APK" "release-files/$APK" \
             || { echo "::error title=Published APK differs::The published APK is not byte-identical to the one that was verified."; exit 1; }
-          echo "Release $TAG is live: it is GitHub's latest release, and its APK and checksum download correctly and match."
-
-      - name: Remove temporary signing files
-        if: always()
-        run: rm -f "$RUNNER_TEMP/flowly-release.jks" "$RUNNER_TEMP/check.csr" debug.keystore app/google-services.json
+          echo "Release $TAG is live: it is GitHub's latest release, with one APK and a checksum that download correctly and match."
