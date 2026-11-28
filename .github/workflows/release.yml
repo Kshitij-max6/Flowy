@@ -97,7 +97,7 @@ jobs:
         run: |
           [ -n "$APPROVED" ] && [ "$APPROVED" = "$RESTORED" ] || { echo "::error title=Key changed during the run::The signing key restored for the build differs from the one the preflight approved. Nothing was published."; exit 1; }
 
-      - uses: android-actions/setup-android@v3
+      - uses: android-actions/setup-android@v4
         with:
           packages: ''
 
