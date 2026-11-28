@@ -199,7 +199,7 @@ jobs:
           [ "$(sha256sum "release-files/$APK" | cut -d' ' -f1)" = "$VERIFIED_SHA256" ] || { echo "::error title=Checksum::The APK is not the one the build job verified."; exit 1; }
 
       - name: Publish GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ env.TAG }}
           target_commitish: ${{ github.sha }}
