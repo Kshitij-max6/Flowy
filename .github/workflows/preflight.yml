@@ -86,7 +86,7 @@ jobs:
           bash .github/release/check-static.sh
           bash .github/release/check-workflows.sh
 
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: 17
